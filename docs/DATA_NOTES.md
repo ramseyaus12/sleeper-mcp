@@ -139,3 +139,46 @@ Every item has `headline`, `description`, `story`, `published` and `playerId`.
   So `isActive` also drops IR players anywhere else it is used. That matters for IR-slot suggestions and injury opportunity in later phases.
 - Team matching needs `WSH → WAS`.
 - Last name + team + position added 1 match out of 95. This run cannot show how much it adds once `isActive` is dropped.
+
+## 2025 backtest feasibility
+
+**Probe run:** `npx tsx scripts/backtest-probe.ts` on 2026-09-24T21:53Z. 10 requests (player map from the disk cache). Weeks 5 and 12 of the 2025 regular season. Every figure below comes from that run.
+
+### Weekly projections
+
+| | Week 5 | Week 12 |
+| --- | --- | --- |
+| v1 projection map, players | 9,418 | 9,418 |
+| v1 `pts_ppr > 0` (all positions) | 808 | 845 |
+| `api.sleeper.com` projection rows (QB/RB/WR/TE) | 3,116 | 3,116 |
+| of those, `pts_ppr > 0` | 301 | 324 |
+| `api.sleeper.com` stat rows (QB/RB/WR/TE) | 618 | 623 |
+| Game dates in the stat rows | 2025-10-02, 10-05, 10-06 | 2025-11-20, 11-23, 11-24 |
+
+- v1 projection lines have no timestamp-like keys. They include `adp_dd_ppr`; its values were not examined.
+- `api.sleeper.com` projection rows carry `updated_at` and `last_modified` (epoch ms), with the same keys as stat rows. Every projected row in a week has the same timestamp to within a second: 2025-10-07T04:00:47Z for week 5 and 2025-11-25T05:00:37Z for week 12, the Tuesday after each week's last game. All of them are later than the player's game date (301 of 301, 324 of 324). The timestamps alone do not show whether the projected values changed.
+
+Projected vs actual `pts_ppr`, for players projected above 5 points who have a stat row:
+
+| | Week 5 | Week 12 |
+| --- | --- | --- |
+| Players | 173 | 184 |
+| Correlation | 0.596 | 0.547 |
+| Mean absolute difference | 5.26 | 5.57 |
+| Mean projected | 12.10 | 12.05 |
+| Mean actual | 12.84 | 10.99 |
+| Projected above 8, scored under 2, no offensive snaps | 0 | 0 |
+
+The v1 map and the `api.sleeper.com` rows gave identical numbers. In each week, 53 players projected above 5 in the v1 map had no stat row; the stat rows were fetched for QB/RB/WR/TE only, so these are probably kickers, defenses and IDP players (not checked).
+
+### League data
+
+- The current league (`1374823072246272000`) has `previous_league_id: null`, and reconnnn has no 2025 leagues on Sleeper. There are no 2025 rosters, draft picks or weekly transactions to replay for this league, so the league and draft checks found nothing to inspect.
+- Draft picks therefore cannot stand in for `search_rank`. The only ADP-like field seen is `adp_dd_ppr` in the 2025 v1 projection lines; its values and coverage were not examined.
+
+### What cannot be replayed
+
+- **Historical injury designations.** The Sleeper player map and the ESPN injury feed are current only, and the `status` field on the 2025 stat rows is empty on every row (618 and 623 rows).
+- **Historical depth charts and `search_rank`.** They come from the current player map only.
+- **Historical trending adds.** The trending endpoint takes a lookback window ending now (not probed).
+- **The waiver pool as it stood each week.** There are no 2025 league rosters or transactions for this league.
