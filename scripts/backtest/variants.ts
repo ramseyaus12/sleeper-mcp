@@ -20,6 +20,11 @@ const VARIANTS: { name: string; label: string; tuning: WaiverTuning | undefined 
   { name: "V3", label: "3+ played weeks", tuning: { stashMinPlayedWeeks: 3 } },
   { name: "V4", label: "rank by proj_next3, limit 5", tuning: { stashSort: "proj_next3", stashLimit: 5 } },
   { name: "V5", label: "V3 + V4", tuning: { stashMinPlayedWeeks: 3, stashSort: "proj_next3", stashLimit: 5 } },
+  {
+    name: "V6",
+    label: "projection floor only, rank by proj_next3, limit 5, this_week allowed",
+    tuning: { stashRequireSignal: false, stashAllowThisWeek: true, stashSort: "proj_next3", stashLimit: 5 },
+  },
 ];
 
 interface Metrics {
@@ -61,7 +66,7 @@ async function main(): Promise<void> {
   };
   const comboLabel = (c: (typeof combos)[number]) => `slot ${c.slot}, rivals ${c.rivals ? "on" : "off"}, long absence ${c.longAbsence ? "on" : "off"}`;
 
-  const results = new Map<string, { perCombo: Metrics[]; all: Metrics }>();
+  const results = new Map<string, { perCombo: Metrics[]; all: Metrics; stash: Graded[] }>();
   for (const variant of VARIANTS) {
     const perCombo: Metrics[] = [];
     const everything: Graded[] = [];
@@ -71,7 +76,7 @@ async function main(): Promise<void> {
       perCombo.push(metrics(stash));
       everything.push(...stash);
     }
-    results.set(variant.name, { perCombo, all: metrics(everything) });
+    results.set(variant.name, { perCombo, all: metrics(everything), stash: everything });
   }
 
   const current = results.get("current");
@@ -98,6 +103,34 @@ async function main(): Promise<void> {
     const mark = variant.name !== "current" && beatsBoth === combos.length ? " ★" : "";
     const beatCells = variant.name === "current" ? "- | - | -" : `${beats3}/12 | ${beatsRos}/12 | ${beatsBoth}/12${mark}`;
     console.log(`| ${variant.name} | ${variant.label} | ${perWeek.toFixed(1)} | ${pct(r.all.sameAsBaseline)} | ${fmt(r.all.gain3w)} | ${fmt(r.all.gainRos)} | ${pct(r.all.wins3w)} | ${beatCells} |`);
+  }
+
+  const v4 = results.get("V4");
+  const v6 = results.get("V6");
+  if (v4 && v6 && current) {
+    console.log("\n### V6 next to current and V4\n");
+    console.log("| Variant | stash per week | = baseline | gain 3w | gain ROS | wins 3w |");
+    console.log("| --- | --- | --- | --- | --- | --- |");
+    for (const [name, r] of [["current", current], ["V4", v4], ["V6", v6]] as const) {
+      console.log(`| ${name} | ${(r.all.n / (combos.length * WEEKS)).toFixed(1)} | ${pct(r.all.sameAsBaseline)} | ${fmt(r.all.gain3w)} | ${fmt(r.all.gainRos)} | ${pct(r.all.wins3w)} |`);
+    }
+    console.log("\n| Combination | V4 gain 3w / ROS | V6 gain 3w / ROS | V6 beats V4 (3w / ROS) |");
+    console.log("| --- | --- | --- | --- |");
+    let both = 0;
+    combos.forEach((combo, i) => {
+      const a = v4.perCombo[i];
+      const b = v6.perCombo[i];
+      if (!a || !b) return;
+      const b3 = b.gain3w !== null && a.gain3w !== null && b.gain3w > a.gain3w;
+      const bR = b.gainRos !== null && a.gainRos !== null && b.gainRos > a.gainRos;
+      if (b3 && bR) both++;
+      console.log(`| ${comboLabel(combo)} | ${fmt(a.gain3w)} / ${fmt(a.gainRos)} | ${fmt(b.gain3w)} / ${fmt(b.gainRos)} | ${b3 ? "yes" : "no"} / ${bR ? "yes" : "no"} |`);
+    });
+    console.log(`\nV6 beats V4 on both in ${both}/12 combinations.`);
+    const horizons = new Map<string, number>();
+    for (const g of v6.stash) horizons.set(g.horizon ?? "-", (horizons.get(g.horizon ?? "-") ?? 0) + 1);
+    const total = v6.stash.length || 1;
+    console.log(`\nV6 stash horizons (${v6.stash.length} picks): ${[...horizons].sort((x, y) => y[1] - x[1]).map(([h, n]) => `${h} ${n} (${Math.round((n / total) * 100)}%)`).join(", ")}`);
   }
 
   console.log("\nPer combination (stash per week; gain 3w / ROS vs baseline):\n");

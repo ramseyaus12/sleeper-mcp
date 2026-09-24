@@ -193,6 +193,7 @@ Stash rules tried through the `tuning` parameter of the pure waiver functions (`
 - V3: a rising or breakout label needs at least 3 played weeks
 - V4: rank stash by proj_next3 instead of stashScore, limit 5
 - V5: V3 plus V4
+- V6: any pool player not in start_now who passes the stash projection floor (no injury opportunity or rising/breakout label needed), ranked by proj_next3, limit 5, and the "horizon must not be this_week" rule is skipped. Usage and opportunity still appear in the reasons.
 
 Stash vs the baseline free agent (highest week-N-projected at the same position), all 12 combinations combined.
 'Beats current' counts combinations where the variant's mean gain over the baseline is higher than today's stash; a combination with no stash entries does not count as a win.
@@ -205,22 +206,52 @@ Stash vs the baseline free agent (highest week-N-projected at the same position)
 | V3 | 3+ played weeks | 9.2 | 1% | -14.7 | -38.9 | 23% | 1/12 | 5/12 | 1/12 |
 | V4 | rank by proj_next3, limit 5 | 5.0 | 4% | -2.8 | -18.2 | 46% | 12/12 | 12/12 | 12/12 ★ |
 | V5 | V3 + V4 | 4.6 | 3% | -4.1 | -19.3 | 42% | 12/12 | 12/12 | 12/12 ★ |
+| V6 | projection floor only, rank by proj_next3, limit 5, this_week allowed | 5.0 | 13% | +2.4 | +8.3 | 48% | 12/12 | 12/12 | 12/12 ★ |
+
+### V6 next to current and V4
+
+| Variant | stash per week | = baseline | gain 3w | gain ROS | wins 3w |
+| --- | --- | --- | --- | --- | --- |
+| current | 10.0 | 1% | -13.6 | -39.7 | 25% |
+| V4 | 5.0 | 4% | -2.8 | -18.2 | 46% |
+| V6 | 5.0 | 13% | +2.4 | +8.3 | 48% |
+
+| Combination | V4 gain 3w / ROS | V6 gain 3w / ROS | V6 beats V4 (3w / ROS) |
+| --- | --- | --- | --- |
+| slot 1, rivals off, long absence off | -2.8 / -4.4 | -0.1 / +17.5 | yes / yes |
+| slot 5, rivals off, long absence off | -10.3 / -21.1 | -4.2 / +7.7 | yes / yes |
+| slot 10, rivals off, long absence off | -12.4 / -21.6 | -2.2 / +11.3 | yes / yes |
+| slot 1, rivals on, long absence off | +2.5 / -23.7 | +7.0 / -1.5 | yes / yes |
+| slot 5, rivals on, long absence off | +6.8 / -10.5 | +9.1 / +16.0 | yes / yes |
+| slot 10, rivals on, long absence off | -3.0 / -33.8 | +4.4 / +2.7 | yes / yes |
+| slot 1, rivals off, long absence on | -1.6 / -2.6 | +0.6 / +19.0 | yes / yes |
+| slot 5, rivals off, long absence on | -7.1 / -18.1 | -4.2 / +8.4 | yes / yes |
+| slot 10, rivals off, long absence on | -8.9 / -14.6 | -1.1 / +12.9 | yes / yes |
+| slot 1, rivals on, long absence on | +1.2 / -22.7 | +6.3 / -6.4 | yes / yes |
+| slot 5, rivals on, long absence on | +5.3 / -15.1 | +10.0 / +15.8 | yes / yes |
+| slot 10, rivals on, long absence on | -3.7 / -30.4 | +3.0 / -3.7 | yes / yes |
+
+V6 beats V4 on both in 12/12 combinations.
+
+V6 stash horizons (720 picks): this_week 527 (73%), rest_of_season 174 (24%), multi_week 19 (3%)
 
 Per combination (stash per week; gain 3w / ROS vs baseline):
 
-| Combination | current | V1 | V2 | V3 | V4 | V5 |
-| --- | --- | --- | --- | --- | --- | --- |
-| slot 1, rivals off, long absence off | 10.0; -12.3 / -18.4 | 10.0; -8.9 / -16.7 | 9.4; -14.8 / -26.2 | 9.2; -13.7 / -20.6 | 5.0; -2.8 / -4.4 | 4.6; -3.7 / -6.3 |
-| slot 5, rivals off, long absence off | 10.0; -20.0 / -36.4 | 9.1; -20.5 / -33.7 | 6.8; -21.5 / -31.7 | 9.2; -20.1 / -30.7 | 5.0; -10.3 / -21.1 | 4.6; -11.3 / -16.4 |
-| slot 10, rivals off, long absence off | 10.0; -21.0 / -35.9 | 10.0; -19.2 / -35.8 | 7.8; -23.0 / -41.3 | 9.2; -21.4 / -34.6 | 5.0; -12.4 / -21.6 | 4.6; -12.5 / -24.1 |
-| slot 1, rivals on, long absence off | 10.0; -8.8 / -45.5 | 9.8; -5.1 / -41.7 | 8.5; -11.8 / -53.5 | 9.2; -10.8 / -49.3 | 5.0; +2.5 / -23.7 | 4.6; -1.0 / -33.4 |
-| slot 5, rivals on, long absence off | 10.0; -5.0 / -39.4 | 7.5; -10.2 / -47.2 | 6.6; -6.2 / -36.5 | 9.2; -3.7 / -28.9 | 5.0; +6.8 / -10.5 | 4.6; +7.2 / -6.7 |
-| slot 10, rivals on, long absence off | 10.0; -13.3 / -54.4 | 9.9; -12.1 / -56.9 | 7.8; -15.0 / -65.5 | 9.2; -15.3 / -55.6 | 5.0; -3.0 / -33.8 | 4.6; -5.5 / -38.6 |
-| slot 1, rivals off, long absence on | 10.0; -14.3 / -27.3 | 10.0; -7.3 / -16.8 | 10.0; -16.0 / -31.3 | 9.2; -16.0 / -27.9 | 5.0; -1.6 / -2.6 | 4.6; -2.0 / -2.1 |
-| slot 5, rivals off, long absence on | 10.0; -17.5 / -38.5 | 9.6; -18.2 / -33.3 | 9.3; -17.7 / -35.3 | 9.2; -18.3 / -34.0 | 5.0; -7.1 / -18.1 | 4.6; -8.6 / -11.8 |
-| slot 10, rivals off, long absence on | 10.0; -19.8 / -36.2 | 10.0; -17.9 / -35.2 | 9.0; -20.7 / -41.7 | 9.2; -20.7 / -38.9 | 5.0; -8.9 / -14.6 | 4.6; -11.0 / -18.6 |
-| slot 1, rivals on, long absence on | 10.0; -10.3 / -45.2 | 10.0; -5.5 / -42.8 | 10.0; -11.8 / -51.8 | 9.2; -13.0 / -49.0 | 5.0; +1.2 / -22.7 | 4.6; -2.1 / -31.5 |
-| slot 5, rivals on, long absence on | 10.0; -7.1 / -44.7 | 8.6; -10.5 / -48.8 | 8.8; -8.8 / -44.8 | 9.2; -8.4 / -40.8 | 5.0; +5.3 / -15.1 | 4.6; +5.9 / -11.2 |
-| slot 10, rivals on, long absence on | 10.0; -13.8 / -54.0 | 10.0; -11.8 / -56.0 | 8.9; -15.5 / -62.4 | 9.2; -15.4 / -56.7 | 5.0; -3.7 / -30.4 | 4.6; -4.3 / -31.4 |
+| Combination | current | V1 | V2 | V3 | V4 | V5 | V6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| slot 1, rivals off, long absence off | 10.0; -12.3 / -18.4 | 10.0; -8.9 / -16.7 | 9.4; -14.8 / -26.2 | 9.2; -13.7 / -20.6 | 5.0; -2.8 / -4.4 | 4.6; -3.7 / -6.3 | 5.0; -0.1 / +17.5 |
+| slot 5, rivals off, long absence off | 10.0; -20.0 / -36.4 | 9.1; -20.5 / -33.7 | 6.8; -21.5 / -31.7 | 9.2; -20.1 / -30.7 | 5.0; -10.3 / -21.1 | 4.6; -11.3 / -16.4 | 5.0; -4.2 / +7.7 |
+| slot 10, rivals off, long absence off | 10.0; -21.0 / -35.9 | 10.0; -19.2 / -35.8 | 7.8; -23.0 / -41.3 | 9.2; -21.4 / -34.6 | 5.0; -12.4 / -21.6 | 4.6; -12.5 / -24.1 | 5.0; -2.2 / +11.3 |
+| slot 1, rivals on, long absence off | 10.0; -8.8 / -45.5 | 9.8; -5.1 / -41.7 | 8.5; -11.8 / -53.5 | 9.2; -10.8 / -49.3 | 5.0; +2.5 / -23.7 | 4.6; -1.0 / -33.4 | 5.0; +7.0 / -1.5 |
+| slot 5, rivals on, long absence off | 10.0; -5.0 / -39.4 | 7.5; -10.2 / -47.2 | 6.6; -6.2 / -36.5 | 9.2; -3.7 / -28.9 | 5.0; +6.8 / -10.5 | 4.6; +7.2 / -6.7 | 5.0; +9.1 / +16.0 |
+| slot 10, rivals on, long absence off | 10.0; -13.3 / -54.4 | 9.9; -12.1 / -56.9 | 7.8; -15.0 / -65.5 | 9.2; -15.3 / -55.6 | 5.0; -3.0 / -33.8 | 4.6; -5.5 / -38.6 | 5.0; +4.4 / +2.7 |
+| slot 1, rivals off, long absence on | 10.0; -14.3 / -27.3 | 10.0; -7.3 / -16.8 | 10.0; -16.0 / -31.3 | 9.2; -16.0 / -27.9 | 5.0; -1.6 / -2.6 | 4.6; -2.0 / -2.1 | 5.0; +0.6 / +19.0 |
+| slot 5, rivals off, long absence on | 10.0; -17.5 / -38.5 | 9.6; -18.2 / -33.3 | 9.3; -17.7 / -35.3 | 9.2; -18.3 / -34.0 | 5.0; -7.1 / -18.1 | 4.6; -8.6 / -11.8 | 5.0; -4.2 / +8.4 |
+| slot 10, rivals off, long absence on | 10.0; -19.8 / -36.2 | 10.0; -17.9 / -35.2 | 9.0; -20.7 / -41.7 | 9.2; -20.7 / -38.9 | 5.0; -8.9 / -14.6 | 4.6; -11.0 / -18.6 | 5.0; -1.1 / +12.9 |
+| slot 1, rivals on, long absence on | 10.0; -10.3 / -45.2 | 10.0; -5.5 / -42.8 | 10.0; -11.8 / -51.8 | 9.2; -13.0 / -49.0 | 5.0; +1.2 / -22.7 | 4.6; -2.1 / -31.5 | 5.0; +6.3 / -6.4 |
+| slot 5, rivals on, long absence on | 10.0; -7.1 / -44.7 | 8.6; -10.5 / -48.8 | 8.8; -8.8 / -44.8 | 9.2; -8.4 / -40.8 | 5.0; +5.3 / -15.1 | 4.6; +5.9 / -11.2 | 5.0; +10.0 / +15.8 |
+| slot 10, rivals on, long absence on | 10.0; -13.8 / -54.0 | 10.0; -11.8 / -56.0 | 8.9; -15.5 / -62.4 | 9.2; -15.4 / -56.7 | 5.0; -3.7 / -30.4 | 4.6; -4.3 / -31.4 | 5.0; +3.0 / -3.7 |
 
-★ marks a variant that beats today's stash in all 12 combinations on both 3-week and rest-of-season gain. V4 and V5 do, and only 3-4% of their picks are the baseline player, so the gain is not from picking the baseline itself. Both are still below the baseline in most combinations.
+★ marks a variant that beats today's stash in all 12 combinations on both 3-week and rest-of-season gain: V4, V5 and V6. V6 also beats V4 in all 12 combinations and is the only variant with a positive average gain over the baseline (+2.4 over 3 weeks, +8.3 rest of season). A pick that is the baseline player gains exactly 0, so V6's higher overlap with the baseline (13%) pulls its average toward 0 rather than inflating it.
+
+73% of V6's picks have the this_week horizon. Most of those have no injury opportunity or usage signal behind them, so their horizon_reason is the start_now fallback text ("Streamer: a projection edge for this week only"), which does not describe a stash. That text would need changing if V6 became the default.
