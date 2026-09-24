@@ -28,7 +28,15 @@ Notes:
 - Player ids are resolved to {id, name, pos, team, inj} everywhere; team defenses use team codes (e.g. "DET").
 - "week" defaults to the current NFL week from get_nfl_state; "season" defaults to the current league season.
 - Any team can be selected by username, user_id, roster_id or team_name.
-- Data is cached briefly (20s–5min); the player database refreshes daily.`;
+- Data is cached briefly (20s–5min); the player database refreshes daily.
+
+Fantasy intel (usage from Sleeper stat rows, injuries and news from ESPN):
+- get_lineup_report: start/sit for one team. The optimal lineup is by projection only; each starter and top bench player adds merged status, 72h news, usage trend and flags. Use for "who should I start" and gameday checks.
+- get_waiver_targets: pickups (start_now, stash, ir_stash), drop_candidates and bench_watch, each with a 3-week projection, a horizon and reasons. Use for waiver questions, then get_player_news on the picks you recommend.
+- get_injury_report: current designations (ESPN merged with Sleeper) by NFL team, position or league roster.
+- get_player_news: ESPN updates for chosen players or a roster (default last 72 hours).
+- get_player_trends: a player's snap, target, carry, red zone and air yards share by week, with a trend label. get_team_usage: how one offense splits volume and who absorbs an injured starter's share.
+- How far to trust waiver buckets (2025 backtest, docs/BACKTEST.md): start_now pickups beat the starter they replace (about +15 pts over 3 weeks) but only tie the top-projected free agent at the position; stash roughly ties or slightly beats that free agent; drop suggestions are rare and held up; ir_stash adds points in an otherwise empty IR slot. The backtest's injury status was a snap-based stand-in, so injury-driven advice is the least tested.`;
 
 export interface CreateServerOptions extends ContextOptions {
   /** Kick off the player-map download in the background as soon as the server is created (default true). */
@@ -89,11 +97,11 @@ function registerPrompts(server: McpServer): void {
               "Steps:",
               "1. get_league for scoring/roster format, get_league_standings for records and playoff picture.",
               `2. get_matchups for ${username}'s matchup: opponent, projected/actual score, key players on both sides.`,
-              `3. get_lineup_projections for ${username}: flag empty slots, injured/bye starters, and better bench options.`,
-              "4. get_free_agents (top few at the weakest positions) and get_trending_players to suggest waiver targets.",
+              `3. get_lineup_report for ${username}: suggested changes, empty slots, and each starter's and top bench player's flags (designation, no projection, falling usage, bench player out-projecting a starter).`,
+              `4. get_waiver_targets for ${username}: start_now and stash pickups with their horizons, drop candidates and IR moves.`,
               "5. get_transactions (this week) for notable league moves and trades.",
               "",
-              "Output: matchup preview, lineup recommendations with reasons, 3-5 waiver targets, league news. Keep it tight and specific.",
+              "Output: matchup preview, lineup recommendations with reasons (from the report's flags and news), 3-5 waiver targets explained from their reasons and horizon, league news. Keep it tight and specific.",
             ].join("\n"),
           },
         },
@@ -120,10 +128,43 @@ function registerPrompts(server: McpServer): void {
             text: [
               `Build a waiver-wire report for "${username}" in Sleeper league ${league_id}.`,
               "",
-              "Use get_league (scoring, roster slots, waiver type/FAAB budget), get_roster (current depth, injuries, FAAB remaining),",
-              "get_free_agents per position of need, get_trending_players (what the market is chasing) and get_projections for the upcoming week.",
+              "1. get_league for scoring, roster slots and waiver type / FAAB budget; get_roster for FAAB remaining.",
+              `2. get_waiver_targets for ${username}: start_now, stash, ir_stash, drop_candidates and bench_watch.`,
+              "3. get_player_news on the top 5 pickups, to check for news the waiver tool does not read.",
               "",
-              "Recommend up to 5 claims ranked by priority, each with: who to add, who to drop, a suggested FAAB bid or waiver priority use, and a one-line reason.",
+              "Recommend up to 5 claims ranked by priority, each with: who to add, who to drop (from drop_candidates' replace_with, or the weakest bench player), a suggested FAAB bid or waiver priority use, and the pick's horizon (this_week, short_term, multi_week, rest_of_season, unknown or after_return) with its horizon_reason, so it is clear how long he should help. Explain picks from their reasons and the news; do not invent your own.",
+            ].join("\n"),
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerPrompt(
+    "gameday_check",
+    {
+      title: "Gameday check",
+      description: "Before kickoff: starters at risk of sitting and the best legal swap for each.",
+      argsSchema: {
+        league_id: z.string().describe("League ID"),
+        username: z.string().describe("Manager's Sleeper username"),
+      },
+    },
+    ({ league_id, username }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `Run a gameday check for "${username}" in Sleeper league ${league_id}.`,
+              "",
+              `1. get_injury_report with league_id ${league_id} and username ${username}, for current designations on the roster.`,
+              `2. get_lineup_report for ${username}, for each starter's status, news, flags and the bench options.`,
+              "",
+              "List the starters at risk of sitting (Questionable, Doubtful, Out, IR, PUP, Sus or NA; no projection; ESPN and Sleeper disagreeing), with the note and latest news for each.",
+              "For each, name the best legal swap: the highest-projected bench_report player eligible for that slot. bench_report already leaves out IR and taxi players; do not suggest taxi players even if optimal_lineup lists them.",
+              "Kickoff times are not available. Inactives come out about 90 minutes before each kickoff, so say which calls on Questionable players should wait for inactives.",
             ].join("\n"),
           },
         },

@@ -121,6 +121,12 @@ Every item has `headline`, `description`, `story`, `published` and `playerId`.
 
 **Item `type` separates player updates from roundups** (checked 2026-09-24, 2 requests: Jaylen Warren and Dalton Schultz, 10 items). `Rotowire` items are short updates about that player alone (5). `Story` items are articles that cover many players, such as the weekly buzz file, rankings, free-agent pickups, and winners and losers (4); their `story` is HTML with placeholders like `<photo1>`. `Media` items are videos with no story text (1). `playerId` is set on every item and always equals the requested player, so it cannot tell them apart. There is no `categories` field.
 
+## Sleeper practice fields
+
+Checked 2026-09-24 in the cached player map (saved 2026-09-24T19:55Z, no requests): `practice_participation` is set on 1 of 12,229 players (value `Out`), and `practice_description` on the same 1, while 809 players have an `injury_status`. So the `practice` part of the merged status is almost always null. Practice information arrives through ESPN injury notes instead (`shortComment`), which the merged status carries as `note` when ESPN supplies it.
+
+Designation values in the same map: Questionable 407, IR 226, NA 96, PUP 38, Out 20, Sus 10, Doubtful 8, DNR 2, COV 2.
+
 ## Still open for section 2
 
 - Step 2 of "Linking ESPN to Sleeper" should not require Sleeper `isActive`; it cost 8 of 95 roster matches. All 8 are real players on injured reserve. Sleeper sets `status: "Inactive"` for IR while keeping `active: true`, and `isActive` rejects them on `status` alone. Read from the cached player map (saved 2026-09-24T19:55Z), no requests:

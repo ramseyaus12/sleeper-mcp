@@ -20,10 +20,12 @@ import {
   type Trend,
   type UsageIndex,
 } from "../intel/usage.js";
-import { splitNews } from "../intel/news.js";
+import { lineupFlags, type ProjectedPlayer, type SuggestedChanges } from "../intel/lineup.js";
+import { splitNews, type PlayerUpdate } from "../intel/news.js";
 import { espnDesignation, espnPosition, indexInjuries, mergeStatus, type InjuryIndex, type PlayerStatus } from "../intel/status.js";
 import { irSlotsOpen, startablePositions, waiverTargets, type LineupSlot, type Opportunity, type WaiverEntry } from "../intel/waivers.js";
 import { guard, leagueIdSchema, positionSchema, teamSelectorShape, weekSchema } from "./shared.js";
+import type { SlotPlayer } from "./rosters.js";
 import { lineupAnalysis } from "./stats.js";
 
 const DEFAULT_WEEKS = 4;
@@ -381,12 +383,76 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         };
       }),
   );
+
+  server.registerTool(
+    "get_lineup_report",
+    {
+      title: "Lineup report",
+      description:
+        "Start/sit report for one team in a league. Contains get_lineup_projections' output unchanged (current and optimal lineup by league-scored projection, suggested changes, warnings, bench); status, news and usage never change the optimal lineup. Adds starter_report (every current starter) and bench_report (the 5 highest-projected bench players not on IR or taxi), each with merged injury status (ESPN + Sleeper, with source and as_of), ESPN player updates from the last 72 hours, the usage trend label with played weeks, and flags: designation, ESPN/Sleeper disagreement, no projection, falling usage, and a bench player out-projecting a starter. Flags come from structured data only; read the news yourself. Kickoff times are not available.",
+      inputSchema: {
+        league_id: leagueIdSchema,
+        ...teamSelectorShape,
+        week: weekSchema,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ league_id, week, ...selector }) =>
+      guard(async () => {
+        const bundle = await loadLeague(ctx, league_id);
+        const roster = await resolveRoster(ctx, bundle, selector);
+        const { week: target } = await resolveWeek(ctx, week);
+        const [projections, usage, statuses] = await Promise.all([
+          ctx.client.getProjections("nfl", "regular", bundle.league.season, target),
+          loadWindow(ctx, DEFAULT_WEEKS, true),
+          loadStatuses(ctx),
+        ]);
+        const lineup = lineupAnalysis(ctx, bundle, roster.roster_id, roster.players ?? [], roster.starters ?? [], projections, target);
+
+        const unavailable = new Set([...(roster.reserve ?? []), ...(roster.taxi ?? [])]);
+        const starters = lineup.current_lineup.filter((p) => p.id !== "0");
+        const bench = lineup.bench.filter((p) => !unavailable.has(p.id)).slice(0, BENCH_REPORTED);
+        const toProjected = (p: SlotPlayer): ProjectedPlayer => ({ player_id: p.id, name: p.name, pts: p.pts ?? 0 });
+        const changes: SuggestedChanges | null = lineup.suggested_changes && {
+          start: lineup.suggested_changes.start.filter((p) => !unavailable.has(p.id)).map(toProjected),
+          sit: lineup.suggested_changes.sit.map(toProjected),
+        };
+        const news = await loadRecentNews(ctx, [...starters, ...bench].map((p) => p.id), Date.now() - NEWS_HOURS * 3_600_000);
+
+        const report = (p: SlotPlayer, role: "starter" | "bench") => {
+          const status = statuses.statusOf(p.id);
+          const player = ctx.players.raw(p.id);
+          const t = isUsagePlayer(player) ? trend(playerWeeks(usage.index, p.id), usagePositions(usage.index, p.id, player)) : null;
+          return {
+            ...p,
+            status,
+            news: news.byPlayer.get(p.id) ?? null,
+            usage: t && { label: t.label, played_weeks: t.played_weeks },
+            flags: lineupFlags({ player_id: p.id, role, pts: p.pts ?? 0, has_projection: Boolean(projections[p.id]), status, trend: t, changes }),
+          };
+        };
+
+        return {
+          ...lineup,
+          note: LINEUP_NOTE,
+          ...espnUnavailable(statuses),
+          ...(news.error ? { news_unavailable: `ESPN news could not be fetched (${news.error}); news is null where it failed.` } : {}),
+          news_hours: NEWS_HOURS,
+          starter_report: starters.map((p) => report(p, "starter")),
+          bench_report: bench.map((p) => report(p, "bench")),
+        };
+      }),
+  );
 }
 
 const STORY_CHARS = 400;
+const NEWS_HOURS = 72;
+const BENCH_REPORTED = 5;
 
 const WAIVER_NOTE =
   "proj is league-scored for the target week; proj_next3 adds the next two weeks. start_gain compares proj with the weakest starter in your optimal lineup that the player could replace; start_now needs at least 1 point. stash accepts next week's projection when a player is on bye. horizon says how long a pickup should help (this_week, short_term, multi_week, rest_of_season, unknown, after_return), with horizon_reason. Every drop names replace_with, a pickup that beats the dropped player over 3 weeks by at least 5 points; highly ranked players go to bench_watch instead of being dropped. usage shares are percent of the team's QB/RB/WR/TE total; deltas compare the last 2 played weeks with earlier ones (or last week with the week before). Explain picks from each entry's reasons.";
+const LINEUP_NOTE =
+  "The lineup fields are get_lineup_projections' output: the optimal lineup is by projection only. optimal_lineup and suggested_changes can include taxi players, who cannot be started; bench_report and the flags already exclude IR and taxi players. starter_report covers the current starters, bench_report the 5 highest-projected bench players not on IR or taxi. flags come from designations, projections, usage and the optimal lineup, never from news text. usage.played_weeks is the sample size: with 2 played weeks the trend compares one game with one. news.updates are ESPN updates about the player alone; news.mentioned_in counts multi-player articles. news is null when the player has no ESPN link (always for K and DEF).";
 const MAX_MENTIONS = 3;
 
 interface StatusLookup {
@@ -408,6 +474,44 @@ async function loadStatuses(ctx: ServerContext): Promise<StatusLookup> {
     if (!(err instanceof EspnApiError)) throw err;
     return { statusOf: (id) => mergeStatus(ctx.players.raw(id), undefined, playersAsOf), injuries: null, espnError: err.message };
   }
+}
+
+interface RecentNews {
+  updates: PlayerUpdate[];
+  /** Articles and videos in the window that mention the player among others. */
+  mentioned_in: number;
+}
+
+/**
+ * ESPN player updates within the window for each player with an ESPN id, plus a count of articles that
+ * mention them. An ESPN failure leaves the affected players out and is returned as `error`.
+ */
+async function loadRecentNews(ctx: ServerContext, ids: readonly string[], since: number): Promise<{ byPlayer: Map<string, RecentNews>; error: string | null }> {
+  const byPlayer = new Map<string, RecentNews>();
+  let error: string | null = null;
+  const espnFailure = (err: unknown) => {
+    if (!(err instanceof EspnApiError)) throw err;
+    error = err.message;
+  };
+  try {
+    const idMap = await ctx.espnIds.get();
+    await Promise.all(
+      ids.map(async (id) => {
+        const espnId = idMap.bySleeper.get(id);
+        if (!espnId) return;
+        try {
+          const feed = await ctx.espn.getPlayerNews(espnId);
+          const { news, mentioned_in } = splitNews(feed, { since, storyChars: STORY_CHARS, maxMentions: Number.POSITIVE_INFINITY });
+          byPlayer.set(id, { updates: news, mentioned_in: mentioned_in.length });
+        } catch (err) {
+          espnFailure(err);
+        }
+      }),
+    );
+  } catch (err) {
+    espnFailure(err);
+  }
+  return { byPlayer, error };
 }
 
 function espnUnavailable(statuses: StatusLookup): { espn_unavailable?: string } {

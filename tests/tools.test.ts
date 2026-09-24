@@ -16,7 +16,9 @@ import {
   p as fixturePlayer,
   players as fixturePlayers,
   projectionsWeek5,
+  rosters as fixtureRosters,
   state,
+  statRowsUrl,
 } from "./fixtures.js";
 
 type Connected = Awaited<ReturnType<typeof connectedClient>>;
@@ -45,6 +47,7 @@ describe("server surface", () => {
         "get_league_rosters",
         "get_league_standings",
         "get_lineup_projections",
+        "get_lineup_report",
         "get_matchups",
         "get_nfl_state",
         "get_player",
@@ -69,7 +72,7 @@ describe("server surface", () => {
       expect(tool.description?.length ?? 0, tool.name).toBeGreaterThan(40);
     }
     const { prompts } = await c.client.listPrompts();
-    expect(prompts.map((p) => p.name).sort()).toEqual(["trade_analysis", "waiver_wire_report", "weekly_briefing"]);
+    expect(prompts.map((p) => p.name).sort()).toEqual(["gameday_check", "trade_analysis", "waiver_wire_report", "weekly_briefing"]);
     const { resources } = await c.client.listResources();
     expect(resources.map((r) => r.uri)).toContain("sleeper://nfl/state");
     const { resourceTemplates } = await c.client.listResourceTemplates();
@@ -89,6 +92,18 @@ describe("server surface", () => {
     const text = prompt.messages[0]!.content.type === "text" ? prompt.messages[0]!.content.text : "";
     expect(text).toContain(`league ${LEAGUE_ID}`);
     expect(text).toContain("week 5");
+    expect(text).toContain("get_lineup_report");
+    expect(text).toContain("get_waiver_targets");
+    const waiver = await c.client.getPrompt({ name: "waiver_wire_report", arguments: { league_id: LEAGUE_ID, username: "alice" } });
+    const waiverText = waiver.messages[0]!.content.type === "text" ? waiver.messages[0]!.content.text : "";
+    expect(waiverText).toContain("get_waiver_targets");
+    expect(waiverText).toContain("get_player_news");
+    expect(waiverText).toContain("horizon");
+    const gameday = await c.client.getPrompt({ name: "gameday_check", arguments: { league_id: LEAGUE_ID, username: "alice" } });
+    const gamedayText = gameday.messages[0]!.content.type === "text" ? gameday.messages[0]!.content.text : "";
+    expect(gamedayText).toContain(`league ${LEAGUE_ID}`);
+    expect(gamedayText).toContain("get_injury_report");
+    expect(gamedayText).toContain("get_lineup_report");
   });
 });
 
@@ -898,5 +913,153 @@ describe("get_waiver_targets", () => {
     const early = await waivers({ "/state/nfl": { ...state, week: 1 } }, { week: 1 });
     expect(early.result.isError).toBeFalsy();
     expect(early.data!.week).toBe(1);
+  });
+});
+
+describe("get_lineup_report", () => {
+  type Reported = { id: string; name: string; slot: string; pts: number; status: Record<string, unknown>; news: unknown; usage: unknown; flags: { kind: string; text: string }[] };
+  const PROJ_WEEK5 = "/projections/nfl/regular/2026/5";
+  const report = async (routes: Record<string, unknown> = {}, args: Record<string, unknown> = {}) => {
+    const k = await connectedClient({ ...kcUsageRoutes(), ...routes });
+    try {
+      return await k.call("get_lineup_report", { league_id: LEAGUE_ID, username: "alice", ...args });
+    } finally {
+      await k.close();
+    }
+  };
+  const find = (list: unknown, id: string) => (list as Reported[]).find((p) => p.id === id)!;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-09T00:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps get_lineup_projections' output unchanged", async () => {
+    const k = await connectedClient(kcUsageRoutes());
+    try {
+      const projections = (await k.call("get_lineup_projections", { league_id: LEAGUE_ID, username: "alice" })).data!;
+      const { data } = await k.call("get_lineup_report", { league_id: LEAGUE_ID, username: "alice" });
+      const { note, news_hours, starter_report, bench_report, ...lineup } = data!;
+      expect(lineup).toEqual(projections);
+      expect(news_hours).toBe(72);
+      expect(note).toMatch(/taxi players, who cannot be started/);
+      expect(starter_report).toBeDefined();
+      expect(bench_report).toBeDefined();
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("reports status, news, usage and flags for every starter and the bench", async () => {
+    const roundup = { type: "Story", headline: "Week 6 buzz", story: "<p>Many players.</p>", published: "2026-10-08T10:00:00Z", playerId: 4242335 };
+    const old = { ...espnNewsTaylor.feed[0], headline: "Old news", published: "2026-10-01T10:00:00Z" };
+    const { data } = await report({ [ESPN_NEWS_TAYLOR_URL]: { feed: [...espnNewsTaylor.feed, roundup, old] } });
+    const starters = data!.starter_report as Reported[];
+    expect(starters.map((p) => p.slot)).toEqual(["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]);
+
+    const kelce = find(starters, "5850");
+    expect(kelce.status).toMatchObject({ designation: "Out", source: "sleeper" });
+    expect(kelce.flags).toEqual([
+      { kind: "designation", text: "Out" },
+      { kind: "no_projection", text: "Projected 0 points this week (bye or inactive?)" },
+      { kind: "starter_outprojected", text: "Projects 0.0 pts; the optimal lineup sits him and starts Jonathan Taylor (16.3), Sam LaPorta (10.6)" },
+    ]);
+    expect(find(starters, "4046")).toMatchObject({ usage: { label: "steady", played_weeks: 4 }, news: null, flags: [] });
+    expect(find(starters, "9226").usage).toEqual({ label: "insufficient", played_weeks: 0 });
+    for (const id of ["4195", "DET"]) expect(find(starters, id)).toMatchObject({ usage: null, news: null });
+
+    const bench = data!.bench_report as Reported[];
+    expect(bench.map((p) => p.id)).toEqual(["6813", "9509"]);
+    const taylor = find(bench, "6813");
+    expect(taylor.status).toMatchObject({ designation: "Questionable", source: "espn" });
+    expect(taylor.flags).toEqual([
+      { kind: "designation", text: "Questionable (ankle): Taylor (ankle) was limited at practice Wednesday." },
+      { kind: "bench_outprojects", text: "Projects 16.3 pts; the optimal lineup starts him and sits Travis Kelce (0.0), Drake London (13.0)" },
+    ]);
+    expect(taylor.news).toEqual({
+      updates: [
+        {
+          headline: "Taylor limited Wednesday",
+          description: "Jonathan Taylor was limited at practice.",
+          story: "Taylor (ankle) was limited at practice Wednesday.",
+          published: "2026-10-08T19:00:00Z",
+          source: "espn",
+          as_of: "2026-10-08T19:00:00Z",
+        },
+      ],
+      mentioned_in: 1,
+    });
+  });
+
+  it("flags ESPN and Sleeper disagreeing", async () => {
+    const taylorOut = await report(espnTaylorAs("INJURY_STATUS_OUT"));
+    expect(find(taylorOut.data!.bench_report, "6813").flags).toContainEqual({ kind: "sources_disagree", text: "ESPN lists Out; Sleeper lists Questionable" });
+    const kelceActive = await report(espnKcRoutes("INJURY_STATUS_ACTIVE"));
+    expect(find(kelceActive.data!.starter_report, "5850").flags).toContainEqual({
+      kind: "sources_disagree",
+      text: "Sleeper lists Out; ESPN lists no designation (ESPN as of 2026-10-09T12:00Z)",
+    });
+  });
+
+  it("flags falling usage with its played weeks, and a starter with no projection", async () => {
+    const qb = (snaps: number) => ({
+      player_id: "4046",
+      team: "KC",
+      opponent: "DEN",
+      stats: { off_snp: snaps, tm_off_snp: 60, gms_active: 1 },
+      player: { position: "QB", fantasy_positions: ["QB"] },
+    });
+    const { 4195: _butker, ...withoutButker } = projectionsWeek5;
+    const { data } = await report({
+      [statRowsUrl(1)]: [],
+      [statRowsUrl(2)]: [],
+      [statRowsUrl(3)]: [qb(60)],
+      [statRowsUrl(4)]: [qb(30)],
+      [PROJ_WEEK5]: withoutButker,
+    });
+    const mahomes = find(data!.starter_report, "4046");
+    expect(mahomes.usage).toEqual({ label: "falling", played_weeks: 2 });
+    expect(mahomes.flags).toEqual([
+      { kind: "usage_falling", text: "Usage falling: snap share 100% -> 50% (last played week vs the one before); 2 played weeks" },
+    ]);
+    expect(find(data!.starter_report, "4195").flags).toEqual([{ kind: "no_projection", text: "No projection this week (bye or inactive?)" }]);
+  });
+
+  it("reports the top 5 bench players, leaving IR and taxi players out of the bench and the flags", async () => {
+    const [alice, ...others] = fixtureRosters;
+    const roster = {
+      ...alice!,
+      players: [...alice!.players!, "4984", "11000", "11002", "12001", "12003", "11003", "11001"],
+      reserve: ["11003"],
+      taxi: ["11001"],
+    };
+    const { data } = await report({
+      [`/league/${LEAGUE_ID}/rosters`]: [roster, ...others],
+      [PROJ_WEEK5]: { ...projectionsWeek5, "11001": { rush_yd: 300 } },
+    });
+    const bench = data!.bench_report as Reported[];
+    expect(bench).toHaveLength(5);
+    expect(bench.slice(0, 4).map((p) => p.id)).toEqual(["4984", "6813", "9509", "11000"]);
+    expect(bench.map((p) => p.id)).not.toContain("11001");
+    expect(bench.map((p) => p.id)).not.toContain("11003");
+    // The unchanged optimal lineup still starts the taxi player; the flags do not name him.
+    expect((data!.optimal_lineup as Reported[]).map((p) => p.id)).toContain("11001");
+    const hall = find(data!.starter_report, "8138");
+    const swap = hall.flags.find((f) => f.kind === "starter_outprojected")!;
+    expect(swap.text).toContain("Jonathan Taylor (16.3)");
+    expect(swap.text).not.toContain("Handcuff Harry");
+  });
+
+  it("still reports the lineup when ESPN is down", async () => {
+    const { data, result } = await report({ [ESPN_INJURIES_URL]: () => ({ status: 500 }), [ESPN_TEAMS_URL]: () => ({ status: 500 }) });
+    expect(result.isError).toBeFalsy();
+    expect(data!.espn_unavailable).toMatch(/^ESPN could not be reached/);
+    expect(data!.news_unavailable).toBe("ESPN news could not be fetched (ESPN API error (HTTP 500)); news is null where it failed.");
+    const taylor = find(data!.bench_report, "6813");
+    expect(taylor).toMatchObject({ news: null, status: { designation: "Questionable", source: "sleeper" } });
+    expect(data!.optimal_lineup).toBeDefined();
   });
 });
