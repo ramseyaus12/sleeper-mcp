@@ -155,7 +155,7 @@ Every item has `headline`, `description`, `story`, `published` and `playerId`.
 | `api.sleeper.com` stat rows (QB/RB/WR/TE) | 618 | 623 |
 | Game dates in the stat rows | 2025-10-02, 10-05, 10-06 | 2025-11-20, 11-23, 11-24 |
 
-- v1 projection lines have no timestamp-like keys. They include `adp_dd_ppr`; its values were not examined.
+- v1 projection lines have no timestamp-like keys. They include `adp_dd_ppr` (see "Preseason ADP" below).
 - `api.sleeper.com` projection rows carry `updated_at` and `last_modified` (epoch ms), with the same keys as stat rows. Every projected row in a week has the same timestamp to within a second: 2025-10-07T04:00:47Z for week 5 and 2025-11-25T05:00:37Z for week 12, the Tuesday after each week's last game. All of them are later than the player's game date (301 of 301, 324 of 324). The timestamps alone do not show whether the projected values changed.
 
 Projected vs actual `pts_ppr`, for players projected above 5 points who have a stat row:
@@ -171,10 +171,19 @@ Projected vs actual `pts_ppr`, for players projected above 5 points who have a s
 
 The v1 map and the `api.sleeper.com` rows gave identical numbers. In each week, 53 players projected above 5 in the v1 map had no stat row; the stat rows were fetched for QB/RB/WR/TE only, so these are probably kickers, defenses and IDP players (not checked).
 
+### Preseason ADP: `adp_dd_ppr`
+
+Checked 2026-09-24 with 2 requests (the 2025 week 1 v1 projection map, fetched twice) and the cached player map for names.
+
+- The 2025 week 1 v1 map has one ADP key, `adp_dd_ppr`, on all 9,422 players. Two values are placeholders: 1000 (8,587 players) and 999 (481 players).
+- The other 354 players have ranks 1 to 354, one player per rank with no gaps. By position (from the current player map): WR 145, RB 94, TE 81, QB 33, DB 1. **No kicker or defense has a rank.**
+- Top 20: Ja'Marr Chase, De'Von Achane, Christian McCaffrey, Bijan Robinson, Saquon Barkley, Jahmyr Gibbs, Justin Jefferson, Bucky Irving, Brock Bowers, Chase Brown, Ashton Jeanty, Jonathan Taylor, CeeDee Lamb, Drake London, Nico Collins, Brian Thomas, Trey McBride, Alvin Kamara, Kyren Williams, Amon-Ra St. Brown. The first QBs are Lamar Jackson (22), Jalen Hurts (24) and Jayden Daniels (32). Ranks 150 to 160 are mostly WR and TE depth (Rashod Bateman, Cam Ward, Wan'Dale Robinson, Jonnu Smith, and others).
+- This was read in 2026. Whether these ranks were frozen before the 2025 season or updated since is not known.
+
 ### League data
 
 - The current league (`1374823072246272000`) has `previous_league_id: null`, and reconnnn has no 2025 leagues on Sleeper. There are no 2025 rosters, draft picks or weekly transactions to replay for this league, so the league and draft checks found nothing to inspect.
-- Draft picks therefore cannot stand in for `search_rank`. The only ADP-like field seen is `adp_dd_ppr` in the 2025 v1 projection lines; its values and coverage were not examined.
+- Draft picks therefore cannot stand in for `search_rank`. The only ADP-like field is `adp_dd_ppr` in the 2025 v1 projection lines (see "Preseason ADP" above).
 
 ### What cannot be replayed
 
