@@ -1,12 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { loadLeague, resolveRoster, ToolError, type ServerContext, type TeamSelector } from "../context.js";
+import { loadLeague, resolveRoster, resolveWeek, ToolError, type ServerContext, type TeamSelector } from "../context.js";
 import { EspnApiError } from "../espn/client.js";
 import type { EspnInjury } from "../espn/types.js";
-import { isoDate, round } from "../format.js";
+import { isoDate, round, scoreStatLine, startingSlots } from "../format.js";
 import {
   buildUsageIndex,
   completedWeeks,
+  THRESHOLDS,
   isUsagePlayer,
   playerWeeks,
   SHARE_KEYS,
@@ -21,9 +22,28 @@ import {
 } from "../intel/usage.js";
 import { splitNews } from "../intel/news.js";
 import { espnDesignation, espnPosition, indexInjuries, mergeStatus, type InjuryIndex, type PlayerStatus } from "../intel/status.js";
-import { guard, positionSchema, teamSelectorShape } from "./shared.js";
+import {
+  candidatePool,
+  dropCandidates,
+  irSlotsOpen,
+  opportunityWeight,
+  positionsOf,
+  projNext3,
+  startablePositions,
+  waiverBuckets,
+  type BenchInput,
+  type CandidateInput,
+  type LineupSlot,
+  type Opportunity,
+  type WaiverEntry,
+} from "../intel/waivers.js";
+import type { Player } from "../sleeper/types.js";
+import { guard, leagueIdSchema, positionSchema, teamSelectorShape, weekSchema } from "./shared.js";
+import { lineupAnalysis } from "./stats.js";
 
-const weeksSchema = z.number().int().min(1).max(18).default(4).describe("Completed weeks to look back over (default 4).");
+const DEFAULT_WEEKS = 4;
+
+const weeksSchema = z.number().int().min(1).max(18).default(DEFAULT_WEEKS).describe("Completed weeks to look back over (default 4).");
 
 const USAGE_NOTE =
   "Shares are percent of the team's QB/RB/WR/TE total that week (snap_share: percent of the team's offensive snaps). A week counts as played only when the player took an offensive snap; other weeks are missed. Trends compare the last 2 played weeks with the earlier played weeks in the window; with exactly 2 played weeks, the last against the one before.";
@@ -255,9 +275,209 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         };
       }),
   );
+
+  server.registerTool(
+    "get_waiver_targets",
+    {
+      title: "Waiver targets",
+      description:
+        "Waiver-wire recommendations for one team in a league: start_now (free agents projected to beat one of your starters in the target week), stash (players in line for an injured starter's volume or rising in usage), ir_stash (injured players worth an open IR slot), drop_candidates (bench players to drop, each with a better replacement, or IR moves) and bench_watch (highly ranked bench players who are slipping). Every pickup has a 3-week projection and a horizon for how long it should help. Uses league-scored projections, usage trends, merged injury status and Sleeper trending adds; every entry has plain-language reasons. No news is fetched.",
+      inputSchema: {
+        league_id: leagueIdSchema,
+        ...teamSelectorShape,
+        position: positionSchema,
+        week: weekSchema,
+        limit: z.number().int().min(1).max(25).default(10).describe("Most entries in start_now, stash and drop_candidates (default 10). ir_stash is capped at 3."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ league_id, position, week, limit, ...selector }) =>
+      guard(async () => {
+        const bundle = await loadLeague(ctx, league_id);
+        const roster = await resolveRoster(ctx, bundle, selector);
+        const startable = startablePositions(startingSlots(bundle.league));
+        if (position && !startable.has(position)) throw new ToolError(`This league does not start ${position}. It starts ${[...startable].join(", ")}.`);
+        const { week: target } = await resolveWeek(ctx, week);
+        const [projections, nextProjections, next2Projections, trending, usage, statuses] = await Promise.all([
+          ctx.client.getProjections("nfl", "regular", bundle.league.season, target),
+          ctx.client.getProjections("nfl", "regular", bundle.league.season, target + 1),
+          ctx.client.getProjections("nfl", "regular", bundle.league.season, target + 2),
+          ctx.client.getTrendingPlayers("nfl", "add", 24, THRESHOLDS.trendingAdds),
+          loadWindow(ctx, DEFAULT_WEEKS, true),
+          loadStatuses(ctx),
+        ]);
+        const scoring = bundle.league.scoring_settings;
+        const projOf = (id: string) => scoreStatLine(projections[id] ?? null, scoring);
+        const nextProjOf = (id: string) => (nextProjections[id] ? scoreStatLine(nextProjections[id], scoring) : null);
+        const next2ProjOf = (id: string) => (next2Projections[id] ? scoreStatLine(next2Projections[id], scoring) : null);
+        const lineup = lineupAnalysis(ctx, bundle, roster.roster_id, roster.players ?? [], roster.starters ?? [], projections, target);
+        const optimal: LineupSlot[] = lineup.optimal_lineup.map((p) => ({ player_id: p.id, slot: p.slot ?? "", pts: p.pts ?? 0 }));
+
+        const histories = new Map<string, PlayerWeek[]>();
+        const trends = new Map<string, Trend>();
+        for (const byPlayer of usage.index.rows.values()) {
+          for (const id of byPlayer.keys()) {
+            if (trends.has(id)) continue;
+            const history = playerWeeks(usage.index, id);
+            histories.set(id, history);
+            trends.set(id, trend(history, usagePositions(usage.index, id, ctx.players.raw(id))));
+          }
+        }
+
+        const all = ctx.players.all();
+        const byTeam = new Map<string, Player[]>();
+        for (const p of all) {
+          if (!p.team) continue;
+          const list = byTeam.get(p.team);
+          if (list) list.push(p);
+          else byTeam.set(p.team, [p]);
+        }
+        const opportunities = new Map<string, Opportunity>();
+        for (const [team, teamPlayers] of byTeam) {
+          for (const starter of vacatedVolume(usage.index, team, teamPlayers, (p) => statuses.statusOf(p.player_id).designation)) {
+            const starterRef = ctx.players.ref(starter.player_id);
+            for (const b of starter.beneficiaries) {
+              const opportunity: Opportunity = {
+                starter_id: starter.player_id,
+                starter_name: starterRef.name,
+                starter_pos: starterRef.pos,
+                designation: starter.designation,
+                body_part: statuses.statusOf(starter.player_id).body_part,
+                vacated: starter.vacated,
+                via: b.via,
+                target_share_change: b.target_share_change,
+                carry_share_change: b.carry_share_change,
+              };
+              const current = opportunities.get(b.player_id);
+              if (!current || opportunityWeight(opportunity) > opportunityWeight(current)) opportunities.set(b.player_id, opportunity);
+            }
+          }
+        }
+
+        const rostered = new Set(bundle.rosters.flatMap((r) => [...(r.players ?? []), ...(r.reserve ?? []), ...(r.taxi ?? [])]));
+        const trendingAdds = new Map(trending.map((t) => [t.player_id, t.count]));
+        const rising = new Set([...trends].filter(([, t]) => t.label === "rising" || t.label === "breakout").map(([id]) => id));
+        const pool = candidatePool({
+          players: all,
+          rostered,
+          positions: position ? new Set([position]) : startable,
+          trendingAdds,
+          beneficiaries: new Set(opportunities.keys()),
+          rising,
+        });
+        const candidates: CandidateInput[] = pool.map((p) => {
+          const status = statuses.statusOf(p.player_id);
+          return {
+            player_id: p.player_id,
+            positions: positionsOf(p),
+            search_rank: p.search_rank ?? null,
+            proj: projOf(p.player_id),
+            next_proj: nextProjOf(p.player_id),
+            next2_proj: next2ProjOf(p.player_id),
+            designation: status.designation,
+            body_part: status.body_part,
+            trend: trends.get(p.player_id) ?? null,
+            trending_adds: trendingAdds.get(p.player_id) ?? null,
+            opportunity: opportunities.get(p.player_id) ?? null,
+          };
+        });
+
+        const irOpen = irSlotsOpen(bundle.league.settings?.reserve_slots, bundle.league.roster_positions, roster.reserve);
+        const buckets = waiverBuckets(candidates, { optimalLineup: optimal, irSlots: irOpen, nameOf: (id) => ctx.players.ref(id).name, limit, week: target });
+
+        const onField = new Set([...(roster.starters ?? []), ...(roster.reserve ?? []), ...(roster.taxi ?? [])]);
+        const bench: BenchInput[] = (roster.players ?? [])
+          .filter((id) => id && id !== "0" && !onField.has(id))
+          .map((id) => {
+            const status = statuses.statusOf(id);
+            const proj = projOf(id);
+            return {
+              player_id: id,
+              proj,
+              proj_next3: projNext3({ proj, next_proj: nextProjOf(id), next2_proj: next2ProjOf(id) }),
+              search_rank: ctx.players.raw(id)?.search_rank ?? null,
+              designation: status.designation,
+              body_part: status.body_part,
+              trend: trends.get(id) ?? null,
+            };
+          });
+        const { drops, bench_watch: benchWatch } = dropCandidates(bench, {
+          irSlots: irOpen,
+          limit,
+          replacements: [...buckets.start_now, ...buckets.stash],
+          nameOf: (id) => ctx.players.ref(id).name,
+          week: target,
+        });
+
+        const usageOf = (id: string, t: Trend | null) => usageSummary(histories.get(id), t);
+        const next3 = (proj: number, next: number | null, next2: number | null, total: number) => ({
+          total: round(total, 2),
+          by_week: [
+            { week: target, proj: round(proj, 2) },
+            { week: target + 1, proj: next === null ? null : round(next, 2) },
+            { week: target + 2, proj: next2 === null ? null : round(next2, 2) },
+          ],
+        });
+        const shape = (e: WaiverEntry) => ({
+          ...ctx.players.ref(e.player_id),
+          proj: round(e.proj, 2),
+          proj_next3: next3(e.proj, e.next_proj, e.next2_proj, e.proj_next3),
+          horizon: e.horizon.horizon,
+          horizon_reason: e.horizon.reason,
+          ...(e.horizon.played_weeks !== undefined ? { horizon_played_weeks: e.horizon.played_weeks } : {}),
+          start_gain: e.start_gain,
+          replaces: e.replaces && {
+            slot: e.replaces.slot,
+            pts: e.replaces.pts,
+            ...(e.replaces.player_id === "0" ? { name: "(empty)" } : ctx.players.ref(e.replaces.player_id)),
+          },
+          usage: usageOf(e.player_id, e.trend),
+          opportunity: e.opportunity && shapeOpportunity(ctx, e.opportunity),
+          trending_adds_24h: e.trending_adds,
+          status: statuses.statusOf(e.player_id),
+          reasons: e.reasons,
+        });
+
+        return {
+          league_id: bundle.league.league_id,
+          league: bundle.league.name,
+          week: target,
+          team_name: lineup.team_name,
+          position: position ?? "all",
+          ir_slots_open: irOpen,
+          note: WAIVER_NOTE,
+          ...espnUnavailable(statuses),
+          start_now: buckets.start_now.map(shape),
+          stash: buckets.stash.map(shape),
+          ir_stash: buckets.ir_stash.map((e) => ({ ...shape(e), search_rank: e.search_rank })),
+          drop_candidates: drops.map((d) => ({
+            ...ctx.players.ref(d.player_id),
+            action: d.action,
+            proj: round(d.proj, 2),
+            proj_next3: round(d.proj_next3, 2),
+            replace_with: d.replace_with && { ...ctx.players.ref(d.replace_with.player_id), proj_next3: round(d.replace_with.proj_next3, 2) },
+            usage: usageOf(d.player_id, d.trend),
+            status: statuses.statusOf(d.player_id),
+            reasons: d.reasons,
+          })),
+          bench_watch: benchWatch.map((b) => ({
+            ...ctx.players.ref(b.player_id),
+            proj: round(b.proj, 2),
+            proj_next3: round(b.proj_next3, 2),
+            search_rank: b.search_rank,
+            usage: usageOf(b.player_id, b.trend),
+            status: statuses.statusOf(b.player_id),
+            reasons: b.reasons,
+          })),
+        };
+      }),
+  );
 }
 
 const STORY_CHARS = 400;
+
+const WAIVER_NOTE =
+  "proj is league-scored for the target week; proj_next3 adds the next two weeks. start_gain compares proj with the weakest starter in your optimal lineup that the player could replace; start_now needs at least 1 point. stash accepts next week's projection when a player is on bye. horizon says how long a pickup should help (this_week, multi_week, rest_of_season, unknown, after_return), with horizon_reason. Every drop names replace_with, a pickup that beats the dropped player over 3 weeks by at least 5 points; highly ranked players go to bench_watch instead of being dropped. usage shares are percent of the team's QB/RB/WR/TE total; deltas compare the last 2 played weeks with earlier ones (or last week with the week before). Explain picks from each entry's reasons.";
 const MAX_MENTIONS = 3;
 
 interface StatusLookup {
@@ -324,11 +544,14 @@ async function resolvePlayers(
   return { ids: [...ids], unresolved };
 }
 
-/** Stat rows for the last `weeks` completed weeks, one combined QB/RB/WR/TE request per week. */
-async function loadWindow(ctx: ServerContext, weeks: number): Promise<{ season: string; weeks: number[]; index: UsageIndex }> {
+/**
+ * Stat rows for the last `weeks` completed weeks, one combined QB/RB/WR/TE request per week. With no
+ * completed weeks this throws, unless `allowEmpty`, which returns an empty index instead.
+ */
+async function loadWindow(ctx: ServerContext, weeks: number, allowEmpty = false): Promise<{ season: string; weeks: number[]; index: UsageIndex }> {
   const state = await ctx.client.getNflState("nfl");
   const window = completedWeeks(state, weeks);
-  if (window.weeks.length === 0) throw new ToolError(`No completed regular-season weeks yet in ${window.season}.`);
+  if (window.weeks.length === 0 && !allowEmpty) throw new ToolError(`No completed regular-season weeks yet in ${window.season}.`);
   const rows = await Promise.all(
     window.weeks.map(async (week) => ({ week, rows: await ctx.client.getStatRows(window.season, week, [...USAGE_POSITIONS]) })),
   );
@@ -362,4 +585,31 @@ function latestSnapShare(history: readonly PlayerWeek[]): number {
 
 function pct(value: number | null): number | null {
   return value === null ? null : round(value, 1);
+}
+
+/** Latest played week's shares plus the trend's label and deltas, rounded for output. */
+function usageSummary(history: readonly PlayerWeek[] | undefined, t: Trend | null): Record<string, unknown> | null {
+  if (!t) return null;
+  const latest = [...(history ?? [])].reverse().find((w) => w.played);
+  return {
+    label: t.label,
+    played_weeks: t.played_weeks,
+    latest: latest?.played
+      ? { week: latest.week, snap_share: pct(latest.snap_share), target_share: pct(latest.target_share), carry_share: pct(latest.carry_share) }
+      : null,
+    deltas:
+      t.played_weeks < 2
+        ? null
+        : { snap_share: pct(t.metrics.snap_share.delta), target_share: pct(t.metrics.target_share.delta), carry_share: pct(t.metrics.carry_share.delta) },
+  };
+}
+
+function shapeOpportunity(ctx: ServerContext, o: Opportunity): Record<string, unknown> {
+  return {
+    injured_starter: { ...ctx.players.ref(o.starter_id), designation: o.designation, body_part: o.body_part },
+    vacated: o.vacated && { target_share: pct(o.vacated.target_share), carry_share: pct(o.vacated.carry_share), rz_share: pct(o.vacated.rz_share) },
+    via: o.via,
+    target_share_change: pct(o.target_share_change),
+    carry_share_change: pct(o.carry_share_change),
+  };
 }

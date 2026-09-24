@@ -19,13 +19,31 @@ export const THRESHOLDS = {
   vacatedWeeks: 3,
   /** Rise in a teammate's target or carry share, in weeks an injured starter missed, that marks the teammate as absorbing his volume. */
   absorbedRisePts: 5,
+  /** Waiver pool: the best-ranked (Sleeper search_rank) unrostered players at the league's positions. */
+  poolRank: 150,
+  /** Waiver pool: trending adds fetched from Sleeper (last 24 hours). */
+  trendingAdds: 100,
+  /** start_now: smallest start_gain (points) that counts, so fractional projection edges do not. */
+  minStartGain: 1.0,
+  /** stash: projection must be at least this share of the weakest starter's projection at that slot. */
+  stashProjShare: 0.4,
+  /** ir_stash: highest Sleeper search_rank that qualifies. */
+  irStashRank: 150,
+  /** ir_stash: most entries returned. */
+  irStashLimit: 3,
+  /** drop: a replacement must beat the dropped player's 3-week projection by at least this many points. */
+  dropMargin: 5.0,
+  /** drop: falling usage counts only with at least this many played weeks behind the trend. */
+  dropMinWeeks: 3,
+  /** drop: players with a Sleeper search_rank this high or better are never dropped (bench_watch instead). */
+  protectRank: 100,
 } as const;
 
 export const USAGE_POSITIONS = ["QB", "RB", "WR", "TE"] as const;
 export const REGULAR_SEASON_WEEKS = 18;
 
-/** Sleeper injury_status values that make an injured starter's volume vacated. */
-export const OUT_DESIGNATIONS: ReadonlySet<string> = new Set(["Out", "IR", "PUP", "Doubtful"]);
+/** Designations that keep a player off the field: an injured starter's volume is vacated, and start_now skips them. */
+export const OUT_DESIGNATIONS: ReadonlySet<string> = new Set(["Out", "IR", "PUP", "Doubtful", "Sus", "NA"]);
 
 export const SHARE_KEYS = ["snap_share", "target_share", "carry_share", "rz_share", "air_yd_share"] as const;
 export type ShareKey = (typeof SHARE_KEYS)[number];

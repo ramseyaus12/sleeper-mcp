@@ -11,9 +11,11 @@ import {
   espnKcRoutes,
   espnNewsTaylor,
   espnTaylorAs,
+  kcUsagePlayers,
   kcUsageRoutes,
   p as fixturePlayer,
   players as fixturePlayers,
+  projectionsWeek5,
   state,
 } from "./fixtures.js";
 
@@ -58,6 +60,7 @@ describe("server surface", () => {
         "get_trending_players",
         "get_user",
         "get_user_leagues",
+        "get_waiver_targets",
         "search_players",
       ].sort(),
     );
@@ -796,5 +799,95 @@ describe("get_player_news", () => {
     } finally {
       await k.close();
     }
+  });
+});
+
+describe("get_waiver_targets", () => {
+  type Entry = { id: string; name: string; pos: string; reasons: string[]; [key: string]: unknown };
+  const waivers = async (routes: Record<string, unknown>, args: Record<string, unknown> = {}) => {
+    const k = await connectedClient({ ...kcUsageRoutes(), ...routes });
+    try {
+      return await k.call("get_waiver_targets", { league_id: LEAGUE_ID, username: "alice", ...args });
+    } finally {
+      await k.close();
+    }
+  };
+  const PROJ_WEEK5 = "/projections/nfl/regular/2026/5";
+  const PROJ_WEEK6 = "/projections/nfl/regular/2026/6";
+
+  it("suggests an injured player for alice's open IR slot", async () => {
+    const { data } = await waivers({});
+    expect(data).toMatchObject({ league_id: LEAGUE_ID, week: 5, team_name: "Alice's Avengers", position: "all", ir_slots_open: 1 });
+    const [ian] = data!.ir_stash as Entry[];
+    expect(ian).toMatchObject({ id: "11003", name: "Injured Ian", search_rank: 60, status: { designation: "IR", source: "sleeper" } });
+    expect(ian!.reasons).toEqual(["On IR; you have an open IR slot to hold him", "Sleeper rank 60"]);
+    expect(ian).toMatchObject({ horizon: "after_return", horizon_reason: "Stash: helps after he returns from IR" });
+    expect(data!.bench_watch).toEqual([]);
+  });
+
+  it("puts a free agent who out-projects a starter in start_now", async () => {
+    const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "11000": { rush_yd: 200 } } });
+    const [runner] = data!.start_now as Entry[];
+    expect(runner).toMatchObject({ id: "11000", proj: 20, start_gain: 6.6, replaces: { slot: "FLEX", pts: 13.4, id: "8138", name: "Breece Hall" } });
+    expect(runner!.reasons[0]).toBe("Projects 20.0 pts vs Breece Hall (13.4) at FLEX: +6.6");
+    expect(runner).toMatchObject({
+      horizon: "this_week",
+      proj_next3: { total: 20, by_week: [{ week: 5, proj: 20 }, { week: 6, proj: null }, { week: 7, proj: null }] },
+    });
+  });
+
+  const kelceOnIr = () => ({ "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "5850": { ...kcUsagePlayers["5850"]!, injury_status: "IR" } } });
+
+  it("does not stash Kelce's backup while Kelce is only Out for the week", async () => {
+    const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
+    expect(data!.stash).toEqual([]);
+    expect(data!.start_now).toEqual([]);
+  });
+
+  it("stashes Kelce's backup, with Kelce's vacated volume as the opportunity", async () => {
+    const { data } = await waivers({ ...kelceOnIr(), [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
+    const [backup] = data!.stash as Entry[];
+    expect(backup).toMatchObject({
+      id: "12002",
+      proj: 7,
+      opportunity: { injured_starter: { id: "5850", name: "Travis Kelce", designation: "IR" }, vacated: { target_share: 25 }, via: ["next_on_depth_chart", "share_rose"] },
+      usage: { label: "breakout", played_weeks: 4 },
+    });
+    expect(backup!.reasons).toContain("TE Travis Kelce (IR) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
+    expect(backup).toMatchObject({ horizon: "multi_week", horizon_reason: "Hold: Travis Kelce is on IR" });
+  });
+
+  it("stashes a player on bye using next week's projection", async () => {
+    const { data } = await waivers({ ...kelceOnIr(), [PROJ_WEEK6]: { "12002": { rec: 4, rec_yd: 30 } } });
+    const [backup] = data!.stash as Entry[];
+    expect(backup).toMatchObject({ id: "12002", proj: 0, proj_next3: { total: 7, by_week: [{ week: 5, proj: 0 }, { week: 6, proj: 7 }, { week: 7, proj: null }] } });
+    expect(backup!.reasons[0]).toBe("No game in week 5; projects 7.0 pts in week 6");
+  });
+
+  it("suggests moving an IR bench player to the open IR slot instead of dropping him", async () => {
+    const laportaIr = { ...fixturePlayers["9509"]!, injury_status: "IR" };
+    const { data } = await waivers({ "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "9509": laportaIr } });
+    expect(data!.drop_candidates).toEqual([
+      expect.objectContaining({ id: "9509", action: "move_to_ir", reasons: ["On IR: move him to your open IR slot instead of dropping him"] }),
+    ]);
+  });
+
+  it("filters by position and rejects positions the league does not start", async () => {
+    const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "11000": { rush_yd: 200 } } }, { position: "rb" });
+    expect(data!.position).toBe("RB");
+    for (const bucket of ["start_now", "stash", "ir_stash"]) expect((data![bucket] as Entry[]).every((e) => e.pos === "RB")).toBe(true);
+    expect((data!.start_now as Entry[]).map((e) => e.id)).toEqual(["11000"]);
+    const bad = await waivers({}, { position: "LB" });
+    expect(bad.result.isError).toBe(true);
+    expect(bad.text).toBe("This league does not start LB. It starts QB, RB, WR, TE, K, DEF.");
+  });
+
+  it("targets the requested week, works when ESPN is down, and works before any week is complete", async () => {
+    expect((await waivers({}, { week: 6 })).data!.week).toBe(6);
+    const down = await waivers({ [ESPN_INJURIES_URL]: () => ({ status: 500 }) });
+    expect(down.data!.espn_unavailable).toMatch(/^ESPN could not be reached/);
+    const early = await waivers({ "/state/nfl": { ...state, week: 1 } }, { week: 1 });
+    expect(early.result.isError).toBeFalsy();
+    expect(early.data!.week).toBe(1);
   });
 });

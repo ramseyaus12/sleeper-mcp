@@ -311,6 +311,13 @@ describe("vacatedVolume", () => {
     expect(starter).toMatchObject({ player_id: "S", designation: "Doubtful", starter_by: ["snap_share"] });
   });
 
+  it("counts suspended and unavailable starters as vacated", () => {
+    for (const designation of ["Sus", "NA"]) {
+      const [starter] = vacatedVolume(index, "AAA", roster({ S: { injury_status: designation } }));
+      expect(starter).toMatchObject({ player_id: "S", designation });
+    }
+  });
+
   it("uses the supplied designation instead of Sleeper's injury_status", () => {
     const merged = (p: Player) => (p.player_id === "W" ? "Out" : null);
     const starters = vacatedVolume(index, "AAA", roster({}), merged);

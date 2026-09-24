@@ -225,22 +225,38 @@ For each NFL team:
 
 ### Waiver buckets
 
-Candidate pool: unrostered, on an NFL team, at positions the league starts. Do not use isActive for this pool: Sleeper gives injured reserve players status "Inactive" while active stays true (DATA_NOTES.md). Use "on an NFL team" instead. Players with injury_status IR or PUP can only land in stash, flagged as needing an IR slot, and only when the team has an open IR slot (league.settings.reserve_slots minus the players in roster.reserve). Take the union of: top 150 by Sleeper rank, top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. Cap at about 60 candidates before fetching news.
+Candidate pool: unrostered, on an NFL team, at positions the league starts. Do not use isActive for this pool: Sleeper gives injured reserve players status "Inactive" while active stays true (DATA_NOTES.md). Use "on an NFL team" instead. Players whose merged designation is IR or PUP go only to `ir_stash`, never to `start_now` or `stash`. Take the union of: the 150 best-ranked by Sleeper rank (`THRESHOLDS.poolRank`), the top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. This tool fetches no news; reasons come from projections, usage, opportunity, status and trending adds.
 
 For each candidate compute:
 
 - `proj` = league-scored projection for the target week
+- `proj_next3` = league-scored projections for the target week and the next two weeks, summed, with the per-week values
+- `horizon` = how long the pickup should help, with a plain-language `horizon_reason`:
+  - `this_week`: only a target-week projection edge, or the opportunity comes from a starter who is Out or Doubtful ("Streamer: Kelce (Out) is expected back soon")
+  - `multi_week`: the opportunity comes from a starter on IR or PUP ("Hold: Conner is on IR")
+  - `rest_of_season`: the player's own usage label is `rising` or `breakout` with no injury opportunity behind it; `played_weeks` shows the sample size
+  - `unknown`: the opportunity comes from a starter who is Sus or NA; the reason says to check news for the length
+  - `after_return`: every `ir_stash` entry
+  - When several apply, the longest wins: rest_of_season > multi_week > unknown > this_week
 - `start_gain` = `proj` minus the projection of the weakest starter in **your optimal lineup** that this player could replace (reuse `lineupAnalysis`)
 - `usage` = latest shares, deltas and label
 - `opportunity` = injured teammate, status and vacated share, if any
 - `trending_adds_24h`
 - `status` = merged status
 
+start_gain is computed in the tool from the optimal lineup `lineupAnalysis` returns, passed to pure functions in `src/intel/waivers.ts`.
+
 Buckets:
 
-- **`start_now`**: `start_gain > 0` and designation is not Out, IR or Doubtful. Sorted by `start_gain`.
-- **`stash`**: has an `opportunity`, or usage label is `rising` / `breakout`, and `proj` is at least 40% of your weakest starter's projection at that slot. Sorted by vacated share plus share delta.
-- **`drop_candidates`** (from your bench): lowest `proj` with `falling` usage, or designation IR (suggest an IR slot instead of a drop when `league.settings.reserve_slots` has room).
+- **`start_now`**: `start_gain` of at least `THRESHOLDS.minStartGain` (1.0 point, so fractional projection edges do not count) and designation not in `OUT_DESIGNATIONS` (Out, IR, PUP, Doubtful, Sus, NA). Uses the target week's projection only. Sorted by `start_gain`.
+- **`stash`**: not already in `start_now`; has an `opportunity`, or usage label is `rising` / `breakout`, and the higher of the target week's and next week's projection is at least 40% (`THRESHOLDS.stashProjShare`) of your weakest starter's projection at that slot, so a player on bye can still qualify (reason: "No game in week N; projects X pts in week N+1"). Its `horizon` must not be `this_week`: a one-week opening (starter Out or Doubtful) is only worth a pickup as a `start_now` streamer. Sorted by vacated share plus share delta.
+- **`ir_stash`**: unrostered players whose designation is IR or PUP, when your team has an open IR slot and their Sleeper `search_rank` is within `THRESHOLDS.irStashRank` (150). Only IR and PUP count as IR-eligible, because the league settings carry no `reserve_allow_*` flags. Each entry includes the merged status (its note carries return timelines) and `search_rank`. Sorted by `search_rank`, at most `THRESHOLDS.irStashLimit` (3).
+- **`drop_candidates`** (from your bench), with safeguards so a good player is never dropped for a worse one:
+  - Designation IR or PUP: suggest an IR slot instead of a drop when one is open (`league.settings.reserve_slots`, else the IR entries in `roster_positions`, minus the players in `roster.reserve`); otherwise a drop candidate.
+  - `falling` usage makes a drop candidate only when the trend covers at least `THRESHOLDS.dropMinWeeks` (3) played weeks.
+  - A drop candidate with a Sleeper `search_rank` within `THRESHOLDS.protectRank` (100) is never listed as a drop; it goes to `bench_watch` with the reason "Highly ranked: consider benching, not dropping".
+  - Every drop names `replace_with`: the best `start_now` or `stash` pickup (any position) whose `proj_next3` beats the dropped player's by at least `THRESHOLDS.dropMargin` (5.0 points), each pickup used once. Its reasons include that 3-week comparison. With no such pickup the player is not listed. Moves to IR need no replacement.
+  - Lowest `proj` first.
 
 Every candidate carries `reasons: string[]` in plain language, for example "WR1 Jameson Doe (Out, hamstring) vacates 24% target share" or "snap share 38% -> 71% over the last 2 weeks". Claude should explain picks from these reasons, not invent its own.
 
