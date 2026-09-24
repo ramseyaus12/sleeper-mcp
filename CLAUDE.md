@@ -47,5 +47,5 @@ A phase is done when `npm run typecheck && npm test && npm run build` all pass.
 
 - Sleeper documented API: leagues, rosters, matchups, players (download at most once a day), trending
 - Sleeper undocumented: `api.sleeper.app/v1/projections/...`, `api.sleeper.com/stats/...` and `api.sleeper.com/projections/...` (rows include team and opponent)
-- ESPN undocumented: `site.api.espn.com/apis/site/v2/sports/football/nfl/injuries` and `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId=`
-- Link ESPN to Sleeper through the Sleeper player's `espn_id`, with name + team as fallback
+- ESPN undocumented: `.../nfl/injuries`, `.../nfl/teams`, `.../nfl/teams/{id}/roster` (all under `site.api.espn.com/apis/site/v2/sports/football`) and `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId=`
+- Link ESPN to Sleeper from ESPN rosters by normalized name + team with suffixes stripped. Sleeper's `espn_id` wins when set, but it is set for only about 25% of players.

@@ -9,7 +9,7 @@ Goal: a read-only MCP server that answers "who do I start" and "who do I pick up
 
 Out of scope: trades of any kind, and anything that writes to your Sleeper account.
 
-Plan written 2026-09-24 against upstream commit `646d89d`.
+Plan written 2026-09-24 against upstream commit `646d89d`. Updated the same day with the Phase 0 findings from `docs/DATA_NOTES.md`.
 
 ---
 
@@ -54,9 +54,10 @@ Why the `api.sleeper.com` variant for stats: the `v1` stats map is keyed by play
 
 Usage fields seen in weekly stat rows (2025 week 10 and 2026 week 2): `off_snp`, `tm_off_snp`, `rec_tgt`, `rec_rz_tgt`, `rec_air_yd`, `rush_att`, `rush_rz_att`, `gms_active`, `gp`, `gs`. I saw `rush_rz_att` only in the 2025 sample, so Phase 0 confirms it for 2026. Not every row has every field (a WR with no carries has no `rush_att`), so treat missing as 0.
 
-Open questions for Phase 0:
-- Does `position[]` filter reliably? One RB-filtered request came back with a WR row in it.
-- Can multiple `position[]` values go in one request (QB, RB, WR, TE together)?
+Resolved in Phase 0 (details in `docs/DATA_NOTES.md`):
+- `position[]` filters on Sleeper's `fantasy_positions`, so fullbacks come back with RBs. Bucket rows by `row.player.fantasy_positions`.
+- Several `position[]` params combine. One request per week covers QB, RB, WR and TE.
+- Rows exist for players who dressed but did not play (`gms_active: 1` with no other stats). A week counts as played only when `off_snp > 0`.
 
 ### ESPN (new, undocumented, no key)
 
@@ -64,8 +65,12 @@ Open questions for Phase 0:
 | --- | --- | --- |
 | `site.api.espn.com/apis/site/v2/sports/football/nfl/injuries` | League-wide injury designations, refreshed often | Yes |
 | `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId={espnId}&limit=5` | Per-player fantasy news blurbs (headline, story, published) | Yes |
+| `site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{teamId}/roster` | ESPN athlete id, full name and position for every player on a team. Source of the ESPN id map. | Yes (one team) |
+| `site.api.espn.com/apis/site/v2/sports/football/nfl/teams` | ESPN team id to abbreviation, needed to call the roster endpoint and to match on team | Not yet, checked in the probe |
 
-Injuries shape (verified): `injuries[]` = teams, each with `injuries[]` items containing `status`, `date`, `shortComment`, `longComment`, `athlete.id`, `athlete.displayName`, `athlete.position.name`, `details.type` (body part), `details.fantasyStatus.description`.
+Injuries shape (verified in Phase 0): `injuries[]` = teams, each with `injuries[]` items containing `status`, `date`, `shortComment`, `longComment`, `type`, `details.type` (body part) and `athlete`. **`athlete` has no `id` field.** The ESPN athlete id is in `athlete.links[].href` (`/id/(\d+)/`). The item's own `id` is the injury record, not the player. The feed also contains players with no designation (`type.name` of `INJURY_STATUS_ACTIVE`), so filter on `type` before treating an item as an injury.
+
+Roster shape (verified for one team): `athletes[]` grouped by `position` (`offense`, `defense`, `specialTeam`), each with `items[]` holding `id`, `fullName`, `position.abbreviation`, `jersey` and `status`.
 
 Player news shape (verified): `feed[]` items with `headline`, `description`, `story`, `published`, `playerId` (ESPN athlete id).
 
@@ -74,14 +79,22 @@ Not used, and why:
 - `site.api.espn.com/.../nfl/news?limit=50` returned only 5 articles in my test.
 - The fantasy news feed without `playerId` returned 5 items, only 1 tied to a player. So news is fetched per player.
 
-**Linking ESPN to Sleeper:** each Sleeper player has `espn_id`. Match ESPN `athlete.id` / `playerId` to it. Phase 0 measures how many active fantasy-relevant players actually have `espn_id` set. Fallback: normalized name + team match.
+**Linking ESPN to Sleeper:** Phase 0 found Sleeper's `espn_id` set for only 25% of active QB/RB/WR/TE (183 of 733). Where it is set it was correct. That breaks news lookup for most players, because the news endpoint needs an ESPN id up front. So the id map is built from ESPN's side:
+
+1. Once a day, fetch the ESPN team list and all 32 team rosters (33 requests).
+2. For each ESPN roster player at QB, RB, WR, TE or FB, match to Sleeper by **normalized name + team**, with suffixes (Jr, Sr, II, III, IV, V) stripped on both sides. Match against every Sleeper player on that team, not only players that pass `isActive`. Map ESPN's `WSH` to Sleeper's `WAS`. If name + team matches more than one Sleeper player, also require the position to match. Phase 0 showed every unmatched injury name it listed was a suffix mismatch.
+3. If still unmatched, try **last name + team + position** when that combination is unique.
+4. Where Sleeper's `espn_id` is set, it wins over the name match.
+5. Report unmatched counts so misses are visible.
+
+A community id table ([dynastyprocess/data](https://github.com/dynastyprocess/data), `db_playerids.csv`) has both `sleeper_id` and `espn_id` columns. I have not checked its coverage for current players, so it is not in the plan.
 
 **Risk:** ESPN documents none of this. A community doc on these endpoints says they "are not officially supported and may change without notice." I have not read ESPN's terms of use. Keep usage personal, cached and low volume.
 
 ### Things I checked that change the design
 
 - **Season projections are full-season totals, not remaining games.** Top players showed `gp: 18` in `/projections/nfl/regular/2026`. So they are not a rest-of-season signal.
-- **Future weekly projections are sparse.** Week 12 had only about 50 to 60 players with non-zero points. Summing future weeks is not a reliable rest-of-season number either.
+- **Far-future weekly projections are sparse.** Week 12 had only about 50 to 60 players with non-zero points. Near weeks are dense: Phase 0 found about 400 QB/RB/WR/TE with non-zero projections for each of weeks 3, 4 and 5. So next-week ranking is well supported, but summing far weeks is not a reliable rest-of-season number.
 - **Decision:** rank by next-week projection plus usage trend plus opportunity. Do not build a rest-of-season projection.
 
 ---
@@ -162,7 +175,9 @@ getProjectionRows(season: string, week: number, positions: string[]): Promise<St
 
 TTL: completed weeks 12 hours (stat corrections still happen), current week 5 minutes.
 
-`EspnClient` mirrors `SleeperClient`'s pattern: injected `fetch`, its own `TtlCache`, timeout, retries with backoff, and a self-imposed cap (start at 120 req/min, a guess since ESPN publishes no limit). TTLs: injuries 10 minutes, player news 20 minutes.
+`EspnClient` mirrors `SleeperClient`'s pattern: injected `fetch`, its own `TtlCache`, timeout, retries with backoff, and a self-imposed cap (start at 120 req/min, a guess since ESPN publishes no limit). Methods: `getInjuries()`, `getPlayerNews(espnId)`, `getTeams()`, `getRoster(teamId)`. TTLs: injuries 10 minutes, player news 20 minutes, teams and rosters 24 hours. Injury items get their ESPN athlete id parsed from `athlete.links[].href`.
+
+`src/intel/ids.ts` builds the ESPN to Sleeper map described in section 2 from the rosters and the player store, and keeps it for 24 hours.
 
 Testing note: `fakeFetch` in `tests/helpers.ts` strips the `api.sleeper.app/v1` base from URLs. URLs on other hosts keep their full URL, so fixture routes for `api.sleeper.com` and ESPN are keyed by the full URL string.
 
@@ -182,7 +197,7 @@ Put thresholds in one exported `THRESHOLDS` object in `src/intel/usage.ts`. **Al
 | `rz_share` | `(rec_rz_tgt + rush_rz_att) / team sum of the same` |
 | `air_yd_share` | `rec_air_yd / team sum of rec_air_yd` |
 
-Team sums need every QB, RB, WR and TE row for that team and week. Skip weeks where the player has `gms_active` 0 or no `off_snp` (bye, injury, inactive) and mark them as `missed` rather than 0.
+Team sums need every QB, RB, WR and TE row for that team and week (one combined request per week). A week counts as played only when `off_snp > 0`. `gms_active` means the player dressed, not that he played, so do not use it for this. Mark unplayed weeks as `missed` rather than 0, and treat missing stat fields on played weeks as 0.
 
 ### Trend
 
@@ -210,7 +225,7 @@ For each NFL team:
 
 ### Waiver buckets
 
-Candidate pool: unrostered, active, at positions the league starts. Take the union of: top 150 by Sleeper rank, top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. Cap at about 60 candidates before fetching news.
+Candidate pool: unrostered, active, at positions the league starts. Phase 0 found real players that fail isActive (see DATA_NOTES.md). Decide this pool's active filter in Phase 4 using those findings. Take the union of: top 150 by Sleeper rank, top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. Cap at about 60 candidates before fetching news.
 
 For each candidate compute:
 
@@ -281,11 +296,11 @@ Stop here and read `DATA_NOTES.md`. If a field or endpoint is missing, adjust se
 
 ### Phase 1: Clients
 
-> **Prompt:** Implement Phase 1 from docs/FORK_PLAN.md: (1) let SleeperClient.rawGet accept absolute https URLs, (2) add StatRow to src/sleeper/types.ts and getStatRows / getProjectionRows to SleeperClient with the TTLs in section 4, (3) create src/espn/client.ts and src/espn/types.ts following SleeperClient's pattern, (4) add `espn` to ServerContext and ContextOptions and wire it in createContext, (5) extend tests/helpers.ts so connectedClient builds an EspnClient with the same fake fetch, (6) add fixture routes keyed by full URL and client tests. Use the response shapes documented in docs/DATA_NOTES.md. No new tools yet.
+> **Prompt:** Implement Phase 1 from docs/FORK_PLAN.md: (1) let SleeperClient.rawGet accept absolute https URLs, (2) add StatRow to src/sleeper/types.ts and getStatRows / getProjectionRows to SleeperClient with the TTLs in section 4, taking a list of positions and sending them as repeated position[] params in one request, (3) create src/espn/client.ts and src/espn/types.ts following SleeperClient's pattern, with getInjuries (parsing the athlete id from athlete.links[].href), getPlayerNews, getTeams and getRoster, (4) add `espn` to ServerContext and ContextOptions and wire it in createContext, (5) extend tests/helpers.ts so connectedClient builds an EspnClient with the same fake fetch, (6) add fixture routes keyed by full URL and client tests. Use the response shapes documented in docs/DATA_NOTES.md. No new tools and no id matching yet.
 
 ### Phase 2: Usage engine + trend tools
 
-> **Prompt:** Implement Phase 2: src/intel/usage.ts with pure functions for the metrics, trend and labels in section 5 (thresholds in one exported THRESHOLDS object), and src/intel/ids.ts for the Sleeper to ESPN id map. Add get_player_trends and get_team_usage in src/tools/intel.ts, register them in server.ts, and add tests: unit tests on hand-made rows in tests/intel.usage.test.ts (including missed weeks and a mid-season team change) and tool tests in tests/tools.test.ts. Update the server surface tool list.
+> **Prompt:** Implement Phase 2: src/intel/usage.ts with pure functions for the metrics, trend and labels in section 5 (thresholds in one exported THRESHOLDS object), and src/intel/ids.ts for the ESPN to Sleeper id map following the five steps under "Linking ESPN to Sleeper" in section 2, with unit tests for suffix stripping, the last name + team + position fallback, and Sleeper espn_id taking priority. Add get_player_trends and get_team_usage in src/tools/intel.ts, register them in server.ts, and add tests: unit tests on hand-made rows in tests/intel.usage.test.ts (including missed weeks and a mid-season team change) and tool tests in tests/tools.test.ts. Update the server surface tool list.
 
 ### Phase 3: Status and news
 
@@ -344,7 +359,7 @@ Once it works locally, a scheduled Claude Code run (or cron + `claude -p`) can s
 | --- | --- |
 | Sleeper `/stats` and `/projections` are undocumented | Already relied on by upstream. Probe script catches shape changes. Tools degrade to "no data" instead of crashing. |
 | ESPN endpoints are undocumented and could change or block | Cache aggressively, low request volume, tools return Sleeper-only status if ESPN fails, with a note saying so. |
-| `espn_id` missing for some players | Name + team fallback, and report unmapped counts in `get_injury_report`. |
+| Sleeper `espn_id` is missing for about 75% of players | Build the id map from ESPN rosters by name + team (section 2), and report unmatched counts in `get_injury_report`. |
 | Practice status comes from a once-a-day file | Label it with the file's load time. ESPN designation is the fresher signal. |
 | Thresholds are guesses | One `THRESHOLDS` object, tuned after real use. |
 | Kickoff times are not in these feeds | Out of scope. A possible later add is ESPN's scoreboard endpoint, which I have not verified. |
