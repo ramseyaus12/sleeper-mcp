@@ -29,18 +29,14 @@ export type WaiverThresholds = { [K in keyof typeof THRESHOLDS]: number };
 export interface WaiverTuning {
   /** Replaces individual THRESHOLDS values used by the waiver functions. */
   thresholds?: Partial<WaiverThresholds>;
-  /** Usage labels that qualify a player for stash without an injury opportunity (default rising and breakout). */
-  stashLabels?: readonly ("rising" | "breakout")[];
-  /** Played weeks a usage trend needs before its label qualifies for stash (default 0). */
-  stashMinPlayedWeeks?: number;
-  /** stash order: stashScore (default) or proj_next3. */
-  stashSort?: "score" | "proj_next3";
-  /** Most stash entries (default: the limit every bucket uses). */
-  stashLimit?: number;
-  /** When false, stash needs neither an injury opportunity nor a rising/breakout label (default true). */
+  /** When true, stash also needs an injury opportunity or a qualifying usage label (default false). */
   stashRequireSignal?: boolean;
-  /** When true, stash also takes players whose horizon is "this_week" (default false). */
-  stashAllowThisWeek?: boolean;
+  /** With stashRequireSignal: usage labels that qualify without an injury opportunity (default rising and breakout). */
+  stashLabels?: readonly ("rising" | "breakout")[];
+  /** With stashRequireSignal: played weeks a usage trend needs before its label qualifies (default 0). */
+  stashMinPlayedWeeks?: number;
+  /** stash order: proj_next3 (default) or stashScore. */
+  stashSort?: "score" | "proj_next3";
 }
 
 function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
@@ -92,7 +88,7 @@ export interface CandidateInput {
 }
 
 /** How long a pickup is likely to help. */
-export type Horizon = "this_week" | "multi_week" | "rest_of_season" | "unknown" | "after_return";
+export type Horizon = "this_week" | "short_term" | "multi_week" | "rest_of_season" | "unknown" | "after_return";
 
 export interface PickupHorizon {
   horizon: Horizon;
@@ -247,10 +243,9 @@ export function stashScore(candidate: CandidateInput): number {
  *   THRESHOLDS.irStashLimit. IR and PUP players never go anywhere else.
  * - start_now: start_gain of at least THRESHOLDS.minStartGain and no designation in OUT_DESIGNATIONS; by
  *   start_gain. Uses the target week's projection only.
- * - stash: not in start_now, has an opportunity or a rising/breakout label, and the higher of this week's
- *   and next week's projection is at least THRESHOLDS.stashProjShare of the weakest starter it could
- *   replace, so a player on bye can still qualify; by stashScore. Its horizon must not be "this_week":
- *   a one-week opening is only worth a pickup as a start_now streamer.
+ * - stash: any other candidate whose higher of this week's and next week's projection is at least
+ *   THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
+ *   by proj_next3, at most THRESHOLDS.stashLimit. No injury opportunity or usage label is needed.
  */
 export function waiverBuckets(candidates: readonly CandidateInput[], options: BucketOptions): WaiverBuckets {
   const { optimalLineup, irSlots, nameOf, limit, week, tuning } = options;
@@ -264,7 +259,7 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     const fit = startGain(candidate.positions, candidate.proj, optimalLineup);
     const base = { ...candidate, start_gain: fit?.gain ?? null, replaces: fit?.replaces ?? null, proj_next3: projNext3(candidate) };
     const entry = (bucket: Bucket): WaiverEntry => {
-      const withHorizon = { ...base, horizon: pickupHorizon(candidate, bucket) };
+      const withHorizon = { ...base, horizon: pickupHorizon(candidate, bucket, week) };
       return { ...withHorizon, reasons: bucket === "ir_stash" ? irStashReasons(withHorizon) : candidateReasons(withHorizon, nameOf, week) };
     };
     if (candidate.designation && IR_ELIGIBLE.has(candidate.designation)) {
@@ -277,17 +272,18 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     }
     const risingUsage = candidate.trend !== null && stashLabels.includes(candidate.trend.label) && candidate.trend.played_weeks >= stashMinPlayedWeeks;
     const floorProj = Math.max(candidate.proj, candidate.next_proj ?? 0);
-    const signal = (tuning?.stashRequireSignal ?? true) ? Boolean(candidate.opportunity || risingUsage) : true;
-    if (signal && fit && floorProj >= t.stashProjShare * fit.replaces.pts) {
-      const stashed = entry("stash");
-      if (tuning?.stashAllowThisWeek || stashed.horizon.horizon !== "this_week") stash.push(stashed);
-    }
+    const signal = tuning?.stashRequireSignal ? Boolean(candidate.opportunity || risingUsage) : true;
+    if (signal && fit && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
-  if (tuning?.stashSort === "proj_next3") stash.sort((a, b) => b.proj_next3 - a.proj_next3);
-  else stash.sort((a, b) => stashScore(b) - stashScore(a));
+  if (tuning?.stashSort === "score") stash.sort((a, b) => stashScore(b) - stashScore(a));
+  else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
   irStash.sort((a, b) => (a.search_rank ?? Number.MAX_SAFE_INTEGER) - (b.search_rank ?? Number.MAX_SAFE_INTEGER));
-  return { start_now: startNow.slice(0, limit), stash: stash.slice(0, tuning?.stashLimit ?? limit), ir_stash: irStash.slice(0, t.irStashLimit) };
+  return {
+    start_now: startNow.slice(0, limit),
+    stash: stash.slice(0, Math.min(limit, t.stashLimit)),
+    ir_stash: irStash.slice(0, t.irStashLimit),
+  };
 }
 
 /** Projection over the target week and the next two, counting unknown weeks as 0. */
@@ -297,17 +293,19 @@ export function projNext3(candidate: Pick<CandidateInput, "proj" | "next_proj" |
 
 type Bucket = "start_now" | "stash" | "ir_stash";
 
-const HORIZON_PRECEDENCE: readonly Horizon[] = ["rest_of_season", "multi_week", "unknown", "this_week"];
+const HORIZON_PRECEDENCE: readonly Horizon[] = ["rest_of_season", "multi_week", "unknown", "short_term", "this_week"];
 
 /**
  * How long a pickup is likely to help. ir_stash entries are "after_return". Otherwise every signal that
- * applies is collected and the longest wins (rest_of_season > multi_week > unknown > this_week):
+ * applies is collected and the longest wins (rest_of_season > multi_week > unknown > short_term >
+ * this_week):
  * - an injury opportunity: "this_week" when the starter is Out or Doubtful, "multi_week" on IR or PUP,
  *   "unknown" when Sus or NA;
  * - with no injury opportunity, a rising or breakout usage label: "rest_of_season";
+ * - a stash entry's 3-week projection: "short_term", so a stash is never "this_week";
  * - a start_now entry's target-week projection edge: "this_week".
  */
-export function pickupHorizon(candidate: CandidateInput, bucket: Bucket): PickupHorizon {
+export function pickupHorizon(candidate: CandidateInput, bucket: Bucket, week: number): PickupHorizon {
   if (bucket === "ir_stash") return { horizon: "after_return", reason: `Stash: helps after he returns from ${candidate.designation ?? "injury"}` };
   const signals: PickupHorizon[] = [];
   const opportunity = candidate.opportunity;
@@ -321,6 +319,9 @@ export function pickupHorizon(candidate: CandidateInput, bucket: Bucket): Pickup
   } else if (candidate.trend && (candidate.trend.label === "rising" || candidate.trend.label === "breakout")) {
     const weeks = candidate.trend.played_weeks;
     signals.push({ horizon: "rest_of_season", reason: `Hold: usage ${candidate.trend.label} over ${weeks} played weeks`, played_weeks: weeks });
+  }
+  if (bucket === "stash") {
+    signals.push({ horizon: "short_term", reason: `Hold for the next few weeks: projects ${fmt(projNext3(candidate))} pts over weeks ${week}-${week + 2}` });
   }
   if (bucket === "start_now") signals.push({ horizon: "this_week", reason: "Streamer: a projection edge for this week only" });
   signals.sort((a, b) => HORIZON_PRECEDENCE.indexOf(a.horizon) - HORIZON_PRECEDENCE.indexOf(b.horizon));

@@ -838,15 +838,24 @@ describe("get_waiver_targets", () => {
 
   const kelceOnIr = () => ({ "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "5850": { ...kcUsagePlayers["5850"]!, injury_status: "IR" } } });
 
-  it("does not stash Kelce's backup while Kelce is only Out for the week", async () => {
+  it("stashes Kelce's backup for the short term while Kelce is only Out for the week", async () => {
     const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
-    expect(data!.stash).toEqual([]);
     expect(data!.start_now).toEqual([]);
+    const backup = (data!.stash as Entry[]).find((e) => e.id === "12002");
+    expect(backup).toMatchObject({ horizon: "short_term", horizon_reason: "Hold for the next few weeks: projects 7.0 pts over weeks 5-7" });
+    expect(backup!.reasons).toContain("TE Travis Kelce (Out) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
+  });
+
+  it("ranks stash by 3-week projection", async () => {
+    const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
+    const stash = data!.stash as Entry[];
+    expect(stash.map((e) => e.id)).toEqual(["11000", "12002"]);
+    expect(stash.map((e) => (e.proj_next3 as { total: number }).total)).toEqual([8, 7]);
   });
 
   it("stashes Kelce's backup, with Kelce's vacated volume as the opportunity", async () => {
     const { data } = await waivers({ ...kelceOnIr(), [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
-    const [backup] = data!.stash as Entry[];
+    const backup = (data!.stash as Entry[]).find((e) => e.id === "12002");
     expect(backup).toMatchObject({
       id: "12002",
       proj: 7,
@@ -859,7 +868,7 @@ describe("get_waiver_targets", () => {
 
   it("stashes a player on bye using next week's projection", async () => {
     const { data } = await waivers({ ...kelceOnIr(), [PROJ_WEEK6]: { "12002": { rec: 4, rec_yd: 30 } } });
-    const [backup] = data!.stash as Entry[];
+    const backup = (data!.stash as Entry[]).find((e) => e.id === "12002");
     expect(backup).toMatchObject({ id: "12002", proj: 0, proj_next3: { total: 7, by_week: [{ week: 5, proj: 0 }, { week: 6, proj: 7 }, { week: 7, proj: null }] } });
     expect(backup!.reasons[0]).toBe("No game in week 5; projects 7.0 pts in week 6");
   });

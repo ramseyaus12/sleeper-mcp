@@ -232,12 +232,13 @@ For each candidate compute:
 - `proj` = league-scored projection for the target week
 - `proj_next3` = league-scored projections for the target week and the next two weeks, summed, with the per-week values
 - `horizon` = how long the pickup should help, with a plain-language `horizon_reason`:
-  - `this_week`: only a target-week projection edge, or the opportunity comes from a starter who is Out or Doubtful ("Streamer: Kelce (Out) is expected back soon")
+  - `this_week`: only a target-week projection edge, or the opportunity comes from a starter who is Out or Doubtful ("Streamer: Kelce (Out) is expected back soon"). Only `start_now` falls back to it.
+  - `short_term`: a `stash` entry without a longer signal ("Hold for the next few weeks: projects X pts over weeks N-N+2"), so a stash is never `this_week`
   - `multi_week`: the opportunity comes from a starter on IR or PUP ("Hold: Conner is on IR")
   - `rest_of_season`: the player's own usage label is `rising` or `breakout` with no injury opportunity behind it; `played_weeks` shows the sample size
   - `unknown`: the opportunity comes from a starter who is Sus or NA; the reason says to check news for the length
   - `after_return`: every `ir_stash` entry
-  - When several apply, the longest wins: rest_of_season > multi_week > unknown > this_week
+  - When several apply, the longest wins: rest_of_season > multi_week > unknown > short_term > this_week
 - `start_gain` = `proj` minus the projection of the weakest starter in **your optimal lineup** that this player could replace (reuse `lineupAnalysis`)
 - `usage` = latest shares, deltas and label
 - `opportunity` = injured teammate, status and vacated share, if any
@@ -249,7 +250,7 @@ start_gain is computed in the tool from the optimal lineup `lineupAnalysis` retu
 Buckets:
 
 - **`start_now`**: `start_gain` of at least `THRESHOLDS.minStartGain` (1.0 point, so fractional projection edges do not count) and designation not in `OUT_DESIGNATIONS` (Out, IR, PUP, Doubtful, Sus, NA). Uses the target week's projection only. Sorted by `start_gain`.
-- **`stash`**: not already in `start_now`; has an `opportunity`, or usage label is `rising` / `breakout`, and the higher of the target week's and next week's projection is at least 40% (`THRESHOLDS.stashProjShare`) of your weakest starter's projection at that slot, so a player on bye can still qualify (reason: "No game in week N; projects X pts in week N+1"). Its `horizon` must not be `this_week`: a one-week opening (starter Out or Doubtful) is only worth a pickup as a `start_now` streamer. Sorted by vacated share plus share delta.
+- **`stash`**: any other pool player (not in `start_now`) whose higher of the target week's and next week's projection is at least 40% (`THRESHOLDS.stashProjShare`) of your weakest starter's projection at that slot, so a player on bye can still qualify (reason: "No game in week N; projects X pts in week N+1"). No injury opportunity or `rising` / `breakout` label is needed; usage and opportunity still appear in the reasons. Sorted by `proj_next3`, at most `THRESHOLDS.stashLimit` (5). This rule came from the 2025 backtest (`docs/BACKTEST.md`, variant V6): it beat the earlier rule (an opportunity or rising/breakout label required, sorted by vacated share plus share delta, one-week openings excluded) in all 12 simulated combinations and was the only stash rule ahead of the highest-projected free agent at the same position.
 - **`ir_stash`**: unrostered players whose designation is IR or PUP, when your team has an open IR slot and their Sleeper `search_rank` is within `THRESHOLDS.irStashRank` (150). Only IR and PUP count as IR-eligible, because the league settings carry no `reserve_allow_*` flags. Each entry includes the merged status (its note carries return timelines) and `search_rank`. Sorted by `search_rank`, at most `THRESHOLDS.irStashLimit` (3).
 - **`drop_candidates`** (from your bench), with safeguards so a good player is never dropped for a worse one:
   - Designation IR or PUP: suggest an IR slot instead of a drop when one is open (`league.settings.reserve_slots`, else the IR entries in `roster_positions`, minus the players in `roster.reserve`); otherwise a drop candidate.

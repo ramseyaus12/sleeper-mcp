@@ -197,13 +197,24 @@ describe("waiverBuckets", () => {
     expect(stash[0]!.reasons).toContain("TE Travis Kelce (IR, knee) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
   });
 
-  it("does not stash a one-week opening that does not beat a starter", () => {
+  it("stashes any other candidate above the projection floor, with no injury or usage signal needed", () => {
+    const plain = candidate("plain", ["WR"], { proj: 6, next_proj: 6, next2_proj: 6 });
     const outBeneficiary = candidate("out", ["TE"], { proj: 4, opportunity: kelceOut });
-    const irBeneficiary = candidate("ir", ["TE"], { proj: 4, opportunity: kelceIr });
-    const { start_now, stash } = waiverBuckets([outBeneficiary, irBeneficiary], options());
+    const below = candidate("below", ["WR"], { proj: 3.9, next_proj: 3.9 });
+    const { start_now, stash } = waiverBuckets([plain, outBeneficiary, below], options());
     expect(start_now).toEqual([]);
-    expect(ids(stash)).toEqual(["ir"]);
-    expect(stash[0]!.horizon.horizon).toBe("multi_week");
+    expect(ids(stash)).toEqual(["plain", "out"]);
+    expect(stash[0]!.horizon).toEqual({ horizon: "short_term", reason: "Hold for the next few weeks: projects 18.0 pts over weeks 5-7" });
+    expect(stash[1]!.horizon.horizon).toBe("short_term");
+    expect(stash[1]!.reasons).toContain("TE Travis Kelce (Out, knee) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
+  });
+
+  it("ranks stash by 3-week projection and keeps at most stashLimit", () => {
+    const pool = [9, 14, 6, 11, 20, 7, 12].map((next3, i) => candidate(`p${i}`, ["WR"], { proj: 4, next_proj: next3 - 4, next2_proj: 0 }));
+    const { stash } = waiverBuckets(pool, options());
+    expect(THRESHOLDS.stashLimit).toBe(5);
+    expect(stash.map((e) => e.proj_next3)).toEqual([20, 14, 12, 11, 9]);
+    expect(waiverBuckets(pool, options({ limit: 3 })).stash.map((e) => e.proj_next3)).toEqual([20, 14, 12]);
   });
 
   it("still starts a one-week opening that beats a starter", () => {
@@ -229,11 +240,11 @@ describe("waiverBuckets", () => {
     expect(ids(waiverBuckets([below, at], options()).stash)).toEqual(["at"]);
   });
 
-  it("never starts an Out, suspended or unavailable player", () => {
+  it("never starts an Out, suspended or unavailable player, though he can be stashed", () => {
     const out = ["Out", "Sus", "NA", "Doubtful"].map((designation) => candidate(designation, ["RB"], { proj: 20, designation }));
     const buckets = waiverBuckets(out, options());
     expect(buckets.start_now).toEqual([]);
-    expect(buckets.stash).toEqual([]);
+    expect(ids(buckets.stash).sort()).toEqual(["Doubtful", "NA", "Out", "Sus"]);
   });
 
   it("sends IR and PUP players only to ir_stash, with an open slot and a good enough rank", () => {
@@ -280,35 +291,40 @@ describe("projNext3", () => {
 describe("pickupHorizon", () => {
   const withStarter = (designation: string, name = "Travis Kelce"): Opportunity => ({ ...kelceOut, starter_name: name, designation });
 
-  it("is this_week for a projection edge alone, or a starter who is Out or Doubtful", () => {
-    expect(pickupHorizon(candidate("a", ["RB"]), "start_now")).toEqual({ horizon: "this_week", reason: "Streamer: a projection edge for this week only" });
-    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Out") }), "stash")).toEqual({
-      horizon: "this_week",
-      reason: "Streamer: Travis Kelce (Out) is expected back soon",
+  it("falls back to this_week for start_now: a projection edge alone, or a starter who is Out or Doubtful", () => {
+    expect(pickupHorizon(candidate("a", ["RB"]), "start_now", 5)).toEqual({ horizon: "this_week", reason: "Streamer: a projection edge for this week only" });
+    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Out") }), "start_now", 5).horizon).toBe("this_week");
+    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Doubtful") }), "start_now", 5).horizon).toBe("this_week");
+  });
+
+  it("is short_term for a stash without a longer signal, never this_week", () => {
+    expect(pickupHorizon(candidate("a", ["WR"], { proj: 5, next_proj: 6.5, next2_proj: null }), "stash", 5)).toEqual({
+      horizon: "short_term",
+      reason: "Hold for the next few weeks: projects 11.5 pts over weeks 5-7",
     });
-    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Doubtful") }), "stash").horizon).toBe("this_week");
+    expect(pickupHorizon(candidate("a", ["TE"], { proj: 4, opportunity: withStarter("Out") }), "stash", 5).horizon).toBe("short_term");
   });
 
   it("is multi_week when the starter is on IR or PUP", () => {
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("IR", "James Conner") }), "stash")).toEqual({
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("IR", "James Conner") }), "stash", 5)).toEqual({
       horizon: "multi_week",
       reason: "Hold: James Conner is on IR",
     });
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("PUP") }), "stash").horizon).toBe("multi_week");
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("PUP") }), "stash", 5).horizon).toBe("multi_week");
   });
 
   it("is unknown when the starter is suspended or NA, and says to check news", () => {
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("Sus", "Some Back") }), "stash")).toEqual({
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("Sus", "Some Back") }), "stash", 5)).toEqual({
       horizon: "unknown",
       reason: "Check news: Some Back is suspended and the length is not known",
     });
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("NA", "Josh Jacobs") }), "stash").reason).toBe(
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("NA", "Josh Jacobs") }), "stash", 5).reason).toBe(
       "Check news: Josh Jacobs is unavailable (NA) and the length is not known",
     );
   });
 
   it("is rest_of_season for rising usage with no injury opportunity, with the sample size", () => {
-    expect(pickupHorizon(candidate("a", ["TE"], { trend: breakout }), "stash")).toEqual({
+    expect(pickupHorizon(candidate("a", ["TE"], { trend: breakout }), "stash", 5)).toEqual({
       horizon: "rest_of_season",
       reason: "Hold: usage breakout over 4 played weeks",
       played_weeks: 4,
@@ -316,18 +332,21 @@ describe("pickupHorizon", () => {
   });
 
   it("is after_return for every ir_stash entry", () => {
-    expect(pickupHorizon(candidate("a", ["WR"], { designation: "IR", opportunity: withStarter("Out"), trend: breakout }), "ir_stash")).toEqual({
+    expect(pickupHorizon(candidate("a", ["WR"], { designation: "IR", opportunity: withStarter("Out"), trend: breakout }), "ir_stash", 5)).toEqual({
       horizon: "after_return",
       reason: "Stash: helps after he returns from IR",
     });
   });
 
   it("uses the longest horizon when several apply", () => {
-    expect(pickupHorizon(candidate("a", ["TE"], { trend: breakout }), "start_now").horizon).toBe("rest_of_season");
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("IR") }), "start_now").horizon).toBe("multi_week");
-    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("Sus") }), "start_now").horizon).toBe("unknown");
+    expect(pickupHorizon(candidate("a", ["TE"], { trend: breakout }), "start_now", 5).horizon).toBe("rest_of_season");
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("IR") }), "start_now", 5).horizon).toBe("multi_week");
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("Sus") }), "start_now", 5).horizon).toBe("unknown");
     // An injury opportunity explains the usage rise, so rising usage does not add rest_of_season.
-    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Out"), trend: breakout }), "stash").horizon).toBe("this_week");
+    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Out"), trend: breakout }), "stash", 5).horizon).toBe("short_term");
+    expect(pickupHorizon(candidate("a", ["TE"], { opportunity: withStarter("Out"), trend: breakout }), "start_now", 5).horizon).toBe("this_week");
+    expect(pickupHorizon(candidate("a", ["RB"], { opportunity: withStarter("Sus") }), "stash", 5).horizon).toBe("unknown");
+    expect(pickupHorizon(candidate("a", ["TE"], { trend: breakout }), "stash", 5).horizon).toBe("rest_of_season");
   });
 
   it("is attached to bucket entries", () => {

@@ -27,6 +27,8 @@ export const THRESHOLDS = {
   minStartGain: 1.0,
   /** stash: projection must be at least this share of the weakest starter's projection at that slot. */
   stashProjShare: 0.4,
+  /** stash: most entries returned (fewer when the tool's limit is lower). */
+  stashLimit: 5,
   /** ir_stash: highest Sleeper search_rank that qualifies. */
   irStashRank: 150,
   /** ir_stash: most entries returned. */
