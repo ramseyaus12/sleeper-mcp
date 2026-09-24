@@ -1,6 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ToolError } from "../context.js";
+import { EspnApiError } from "../espn/client.js";
 import { SleeperApiError, SleeperNotFoundError } from "../sleeper/client.js";
 import { SleeperGraphqlError } from "../sleeper/graphql.js";
 
@@ -37,6 +38,10 @@ export async function guard(fn: () => Promise<unknown>): Promise<CallToolResult>
     if (err instanceof SleeperApiError) {
       if (err.status === 429) return errorResult("Sleeper is rate limiting requests right now. Wait a few seconds and try again.");
       return errorResult(`Sleeper API request failed: ${err.message}`);
+    }
+    if (err instanceof EspnApiError) {
+      if (err.status === 429) return errorResult("ESPN is rate limiting requests right now. Wait a minute and try again.");
+      return errorResult(`ESPN request failed: ${err.message}`);
     }
     const message = err instanceof Error ? err.message : String(err);
     return errorResult(`Unexpected error: ${message}`);

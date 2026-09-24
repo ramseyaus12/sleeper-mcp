@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EspnApiError, EspnClient, espnIdFromLinks } from "../src/espn/client.js";
+import { EspnIdMapLoader, ID_MAP_TTL_MS } from "../src/espn/idmap.js";
+import { PlayerStore } from "../src/sleeper/players.js";
 import { TtlCache } from "../src/sleeper/cache.js";
 import { SleeperApiError, SleeperClient, SleeperNotFoundError, avatarUrl, playerHeadshotUrl } from "../src/sleeper/client.js";
 import type { StatRow } from "../src/sleeper/types.js";
@@ -10,6 +12,7 @@ import {
   ESPN_ROSTER_IND_URL,
   ESPN_TEAMS_URL,
   LEAGUE_ID,
+  espnTeams,
   PROJECTION_ROWS_WEEK5_URL,
   STAT_ROWS_WEEK4_URL,
   espnInjuries,
@@ -296,5 +299,68 @@ describe("EspnClient", () => {
     } finally {
       await c.close();
     }
+  });
+});
+
+describe("EspnIdMapLoader", () => {
+  const WSH_ROSTER_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/28/roster";
+
+  function setup(overrides: Record<string, unknown> = {}) {
+    let now = 0;
+    let playersNow = 1_000;
+    const ff = fakeFetch(overrides);
+    const players = new PlayerStore(testClient(ff), { cacheDir: null, now: () => playersNow });
+    const loader = new EspnIdMapLoader(testEspnClient(ff), players, () => now);
+    return {
+      ff,
+      players,
+      loader,
+      advance: (ms: number) => (now += ms),
+      reloadPlayers: async () => {
+        playersNow += 1;
+        await players.refresh();
+      },
+    };
+  }
+
+  it("builds from the teams list and every roster, then serves the cached map", async () => {
+    const { ff, loader } = setup();
+    const map = await loader.get();
+    expect(map.byEspn.get("4242335")).toBe("6813");
+    expect(map.report.matched.name_team).toBe(1);
+    expect(await loader.get()).toBe(map);
+    expect(ff.calls.filter((c) => c === ESPN_TEAMS_URL)).toHaveLength(1);
+    expect(ff.calls.filter((c) => c === ESPN_ROSTER_IND_URL)).toHaveLength(1);
+    expect(ff.calls.filter((c) => c === WSH_ROSTER_URL)).toHaveLength(1);
+  });
+
+  it("shares one build between concurrent callers", async () => {
+    const { ff, loader } = setup();
+    const [a, b] = await Promise.all([loader.get(), loader.get()]);
+    expect(a).toBe(b);
+    expect(ff.calls.filter((c) => c === ESPN_TEAMS_URL)).toHaveLength(1);
+  });
+
+  it("rebuilds after 24 hours", async () => {
+    const { loader, advance } = setup();
+    const first = await loader.get();
+    advance(ID_MAP_TTL_MS - 1);
+    expect(await loader.get()).toBe(first);
+    advance(2);
+    expect(await loader.get()).not.toBe(first);
+  });
+
+  it("rebuilds when the Sleeper player map reloads", async () => {
+    const { loader, reloadPlayers } = setup();
+    const first = await loader.get();
+    await reloadPlayers();
+    expect(await loader.get()).not.toBe(first);
+  });
+
+  it("caches nothing when a request fails, so the next call tries again", async () => {
+    const { ff, loader } = setup({ [ESPN_TEAMS_URL]: () => ({ status: 500 }) });
+    await expect(loader.get()).rejects.toBeInstanceOf(EspnApiError);
+    ff.set(ESPN_TEAMS_URL, espnTeams);
+    expect((await loader.get()).byEspn.get("4242335")).toBe("6813");
   });
 });

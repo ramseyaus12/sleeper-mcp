@@ -311,6 +311,12 @@ describe("vacatedVolume", () => {
     expect(starter).toMatchObject({ player_id: "S", designation: "Doubtful", starter_by: ["snap_share"] });
   });
 
+  it("uses the supplied designation instead of Sleeper's injury_status", () => {
+    const merged = (p: Player) => (p.player_id === "W" ? "Out" : null);
+    const starters = vacatedVolume(index, "AAA", roster({}), merged);
+    expect(starters.map((s) => [s.player_id, s.designation, s.starter_by])).toEqual([["W", "Out", ["depth_chart", "snap_share"]]]);
+  });
+
   it("averages vacated shares over the last 3 played weeks", () => {
     const rows = (week: number, tgt: number): WeekRows => ({
       week,

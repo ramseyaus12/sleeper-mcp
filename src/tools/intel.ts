@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadLeague, resolveRoster, ToolError, type ServerContext, type TeamSelector } from "../context.js";
+import { EspnApiError } from "../espn/client.js";
+import type { EspnInjury } from "../espn/types.js";
 import { isoDate, round } from "../format.js";
 import {
   buildUsageIndex,
@@ -17,6 +19,7 @@ import {
   type Trend,
   type UsageIndex,
 } from "../intel/usage.js";
+import { espnDesignation, espnPosition, indexInjuries, mergeStatus, type InjuryIndex, type PlayerStatus } from "../intel/status.js";
 import { guard, positionSchema, teamSelectorShape } from "./shared.js";
 
 const weeksSchema = z.number().int().min(1).max(18).default(4).describe("Completed weeks to look back over (default 4).");
@@ -54,17 +57,17 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           throw new ToolError(unresolved.length ? `No players found for: ${unresolved.join(", ")}.` : "None of those players is a QB, RB, WR or TE.");
         }
         const skipped = ids.filter((id) => !tracked.includes(id)).map((id) => ctx.players.ref(id));
-        const window = await loadWindow(ctx, weeks);
-        const asOf = isoDate(ctx.players.lastLoadedAt);
+        const [window, statuses] = await Promise.all([loadWindow(ctx, weeks), loadStatuses(ctx)]);
         return {
           season: window.season,
           weeks: window.weeks,
           note: USAGE_NOTE,
+          ...espnUnavailable(statuses),
           players: tracked.map((id) => {
             const history = playerWeeks(window.index, id);
             return {
               ...ctx.players.ref(id),
-              status: { designation: ctx.players.raw(id)?.injury_status ?? null, source: "sleeper", as_of: asOf },
+              status: statuses.statusOf(id),
               weeks: history.map(formatWeek),
               trend: formatTrend(trend(history, usagePositions(window.index, id, ctx.players.raw(id)))),
             };
@@ -94,7 +97,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         await ctx.players.ensureLoaded();
         const teamPlayers = ctx.players.all().filter((p) => p.team === team);
         if (teamPlayers.length === 0) throw new ToolError(`No NFL team "${team}". Use Sleeper's team codes, e.g. KC, DET, WAS.`);
-        const window = await loadWindow(ctx, weeks);
+        const [window, statuses] = await Promise.all([loadWindow(ctx, weeks), loadStatuses(ctx)]);
         const asOf = isoDate(ctx.players.lastLoadedAt);
         const positionsOf = (id: string) => usagePositions(window.index, id, ctx.players.raw(id));
         const inPosition = (id: string) => !position || positionsOf(id).includes(position);
@@ -109,11 +112,11 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           .sort((a, b) => positionRank(a.id) - positionRank(b.id) || latestSnapShare(b.history) - latestSnapShare(a.history))
           .map(({ id, history }) => ({ ...ctx.players.ref(id), weeks: history.map(formatWeek), trend: formatTrend(trend(history, positionsOf(id))) }));
 
-        const vacated = vacatedVolume(window.index, team, teamPlayers)
+        const vacated = vacatedVolume(window.index, team, teamPlayers, (p) => statuses.statusOf(p.player_id).designation)
           .filter((v) => inPosition(v.player_id))
           .map((v) => ({
             ...ctx.players.ref(v.player_id),
-            status: { designation: v.designation, source: "sleeper", as_of: asOf },
+            status: statuses.statusOf(v.player_id),
             starter_by: v.starter_by,
             played_weeks: v.played_weeks,
             vacated: v.vacated && { target_share: pct(v.vacated.target_share), carry_share: pct(v.vacated.carry_share), rz_share: pct(v.vacated.rz_share) },
@@ -131,6 +134,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           weeks: window.weeks,
           position: position ?? "all",
           note: USAGE_NOTE,
+          ...espnUnavailable(statuses),
           status_source: "sleeper",
           status_as_of: asOf,
           players,
@@ -138,6 +142,176 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         };
       }),
   );
+
+  server.registerTool(
+    "get_injury_report",
+    {
+      title: "Injury report",
+      description:
+        "Current injury designations (Questionable, Doubtful, Out, IR and so on) for QBs, RBs, WRs and TEs, merging ESPN's injury feed (fresher) with Sleeper's daily player file; each entry's status carries its source and as_of. Filter by NFL teams, positions, or one league roster (league_id + team selector, or the default user). Lists ESPN entries that could not be linked to Sleeper. Uses Sleeper's designations alone when ESPN is unavailable.",
+      inputSchema: {
+        teams: z.array(z.string().trim().toUpperCase().min(2).max(3)).max(32).optional().describe("NFL team codes as Sleeper writes them, e.g. KC, DET, WAS."),
+        positions: z.array(z.string().trim().toUpperCase()).max(4).optional().describe("Any of QB, RB, WR, TE (default all four)."),
+        league_id: z.string().trim().min(1).optional().describe("Limit to one roster in this league, chosen with a team selector or the default user."),
+        ...teamSelectorShape,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ teams, positions, league_id, ...selector }) =>
+      guard(async () => {
+        const wanted = positions?.length ? positions : [...USAGE_POSITIONS];
+        const invalid = wanted.filter((p) => !(USAGE_POSITIONS as readonly string[]).includes(p));
+        if (invalid.length) throw new ToolError(`positions must be QB, RB, WR or TE (got ${invalid.join(", ")}).`);
+        await ctx.players.ensureLoaded();
+        const rosterIds = league_id ? await rosterPlayerIds(ctx, league_id, selector) : null;
+        const teamSet = teams?.length ? new Set(teams) : null;
+        const inScope = (id: string) => {
+          const player = ctx.players.raw(id);
+          if (rosterIds && !rosterIds.has(id)) return false;
+          if (teamSet && !teamSet.has(player?.team ?? "")) return false;
+          return true;
+        };
+        const statuses = await loadStatuses(ctx);
+        const espnItems = statuses.injuries?.bySleeper ?? new Map<string, EspnInjury>();
+
+        // Linked ESPN items plus every Sleeper player with a designation; each keeps its merged status.
+        const candidates = new Set(espnItems.keys());
+        for (const p of ctx.players.all()) if (p.injury_status && (rosterIds || p.team)) candidates.add(p.player_id);
+
+        const injuries: (ReturnType<ServerContext["players"]["ref"]> & { status: PlayerStatus })[] = [];
+        for (const id of candidates) {
+          if (!inScope(id)) continue;
+          const status = statuses.statusOf(id);
+          if (status.designation === null) continue;
+          const item = espnItems.get(id);
+          const player = ctx.players.raw(id);
+          const playerPositions = item ? [espnPosition(item)] : (player?.fantasy_positions ?? (player?.position ? [player.position] : []));
+          if (!playerPositions.some((pos) => pos !== null && wanted.includes(pos))) continue;
+          injuries.push({ ...ctx.players.ref(id), status });
+        }
+        injuries.sort(byTeamThenName);
+
+        if (!statuses.injuries) return { ...espnUnavailable(statuses), count: injuries.length, injuries };
+        const unmatched = statuses.injuries.unmatched.filter((item) => {
+          const position = espnPosition(item);
+          return espnDesignation(item) !== null && position !== null && wanted.includes(position);
+        });
+        return {
+          count: injuries.length,
+          injuries,
+          unmatched: {
+            count: unmatched.length,
+            names: unmatched.map((item) => item.athlete.displayName ?? "(unnamed)"),
+            note: "ESPN entries at these positions that could not be linked to a Sleeper player. Not filtered by team or roster.",
+          },
+        };
+      }),
+  );
+
+  server.registerTool(
+    "get_player_news",
+    {
+      title: "Player news",
+      description:
+        "Latest ESPN fantasy news for chosen players or a whole roster, from the last N hours (default 72): headline, description, a shortened story and published time, each with source and as_of. Players ESPN cannot be linked to are listed under no_espn_id.",
+      inputSchema: {
+        player_ids: z.array(z.string().trim().min(1)).max(30).optional().describe("Sleeper player_ids."),
+        names: z.array(z.string().trim().min(1)).max(30).optional().describe("Player names when you do not have ids; the best QB/RB/WR/TE match per name is used."),
+        league_id: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("With a team selector (or the default user), news for every player on that roster. Ignored when player_ids or names are given."),
+        ...teamSelectorShape,
+        hours: z.number().int().min(1).max(720).default(72).describe("Only news published within this many hours (default 72)."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ player_ids, names, league_id, hours, ...selector }) =>
+      guard(async () => {
+        await ctx.players.ensureLoaded();
+        const { ids, unresolved } = await resolvePlayers(ctx, player_ids ?? [], names ?? [], league_id, selector);
+        if (ids.length === 0) throw new ToolError(`No players found for: ${unresolved.join(", ")}.`);
+        const idMap = await ctx.espnIds.get();
+        const since = Date.now() - hours * 3_600_000;
+        const linked = ids.flatMap((id) => {
+          const espnId = idMap.bySleeper.get(id);
+          return espnId ? [{ id, espnId }] : [];
+        });
+        const noEspnId = ids.filter((id) => !idMap.bySleeper.has(id)).map((id) => ctx.players.ref(id));
+        const players = await Promise.all(
+          linked.map(async ({ id, espnId }) => {
+            const feed = await ctx.espn.getPlayerNews(espnId);
+            const news = feed
+              .filter((item) => {
+                const published = Date.parse(item.published ?? "");
+                return Number.isFinite(published) && published >= since;
+              })
+              .map((item) => ({
+                headline: item.headline ?? null,
+                description: item.description ?? null,
+                story: shorten(item.story ?? null, STORY_CHARS),
+                published: item.published ?? null,
+                source: "espn",
+                as_of: item.published ?? null,
+              }));
+            return { ...ctx.players.ref(id), espn_id: espnId, news };
+          }),
+        );
+        return {
+          hours,
+          players,
+          ...(noEspnId.length ? { no_espn_id: noEspnId } : {}),
+          ...(unresolved.length ? { unresolved } : {}),
+        };
+      }),
+  );
+}
+
+const STORY_CHARS = 400;
+
+interface StatusLookup {
+  statusOf: (playerId: string) => PlayerStatus;
+  /** Null when ESPN could not be reached; statuses are then Sleeper's only. */
+  injuries: InjuryIndex | null;
+  espnError: string | null;
+}
+
+/** Merged statuses from ESPN's injury feed and the id map, or Sleeper-only when ESPN fails. */
+async function loadStatuses(ctx: ServerContext): Promise<StatusLookup> {
+  await ctx.players.ensureLoaded();
+  const playersAsOf = isoDate(ctx.players.lastLoadedAt);
+  try {
+    const [teams, idMap] = await Promise.all([ctx.espn.getInjuries(), ctx.espnIds.get()]);
+    const injuries = indexInjuries(teams, idMap.byEspn);
+    return { statusOf: (id) => mergeStatus(ctx.players.raw(id), injuries.bySleeper.get(id), playersAsOf), injuries, espnError: null };
+  } catch (err) {
+    if (!(err instanceof EspnApiError)) throw err;
+    return { statusOf: (id) => mergeStatus(ctx.players.raw(id), undefined, playersAsOf), injuries: null, espnError: err.message };
+  }
+}
+
+function espnUnavailable(statuses: StatusLookup): { espn_unavailable?: string } {
+  return statuses.espnError ? { espn_unavailable: `ESPN could not be reached (${statuses.espnError}); statuses are Sleeper's only.` } : {};
+}
+
+async function rosterPlayerIds(ctx: ServerContext, leagueId: string, selector: TeamSelector): Promise<Set<string>> {
+  const bundle = await loadLeague(ctx, leagueId);
+  const roster = await resolveRoster(ctx, bundle, selector);
+  return new Set(roster.players ?? []);
+}
+
+function byTeamThenName(a: { team: string | null; name: string }, b: { team: string | null; name: string }): number {
+  return (a.team ?? "").localeCompare(b.team ?? "") || a.name.localeCompare(b.name);
+}
+
+/** Cuts text to about `max` characters at a word boundary, marking the cut with an ellipsis. */
+function shorten(text: string | null, max: number): string | null {
+  if (!text || text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max - 80 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 /** Player ids from explicit ids and names, or else from a league roster. */

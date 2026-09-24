@@ -473,6 +473,40 @@ export function kcUsageRoutes(extraPlayers: PlayerMap = {}): Record<string, unkn
   return out;
 }
 
+/**
+ * ESPN overrides that add KC to the teams list, a KC roster with Travis Kelce, and a Kelce item of the
+ * given type.name to the injury feed (alongside the default Jonathan Taylor item).
+ */
+export function espnKcRoutes(kelceType: string): Record<string, unknown> {
+  const kelce = {
+    id: "900010",
+    status: kelceType === "INJURY_STATUS_ACTIVE" ? "Active" : "Out",
+    date: "2026-10-09T12:00Z",
+    shortComment: "Kelce (knee) update.",
+    type: { name: kelceType },
+    details: { type: "Knee" },
+    athlete: {
+      displayName: "Travis Kelce",
+      position: { name: "Tight End" },
+      links: [{ href: "https://www.espn.com/nfl/player/_/id/15847/travis-kelce" }],
+    },
+  };
+  return {
+    [ESPN_TEAMS_URL]: { sports: [{ leagues: [{ teams: [...espnTeams.sports[0]!.leagues[0]!.teams, { team: { id: "12", abbreviation: "KC", displayName: "Kansas City Chiefs" } }] }] }] },
+    "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12/roster": {
+      athletes: [{ position: "offense", items: [{ id: "15847", fullName: "Travis Kelce", position: { abbreviation: "TE" } }] }],
+    },
+    [ESPN_INJURIES_URL]: { injuries: [...espnInjuries.injuries, { injuries: [kelce] }] },
+  };
+}
+
+/** The default ESPN injury feed with Jonathan Taylor's item changed to the given type.name. */
+export function espnTaylorAs(typeName: string): Record<string, unknown> {
+  const [team] = espnInjuries.injuries;
+  const [taylor, ...rest] = team!.injuries;
+  return { [ESPN_INJURIES_URL]: { injuries: [{ injuries: [{ ...taylor, type: { name: typeName } }, ...rest] }] } };
+}
+
 /** Route table: path (without base) -> body. Query strings are matched exactly where present. */
 export function routes(): Record<string, unknown> {
   return {

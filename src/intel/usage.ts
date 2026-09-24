@@ -272,9 +272,15 @@ export interface VacatedStarter {
  * OUT_DESIGNATIONS and either depth chart order 1 or an average snap share of at least
  * THRESHOLDS.starterSnapShare over his last played weeks. `teamPlayers` is every Sleeper player on the
  * team, not only those that pass isActive, because Sleeper marks injured reserve players "Inactive".
+ * `designationOf` supplies each player's designation (Sleeper's injury_status by default).
  */
-export function vacatedVolume(index: UsageIndex, team: string, teamPlayers: readonly Player[]): VacatedStarter[] {
-  const injured = teamPlayers.filter((p) => p.team === team && isUsagePlayer(p) && OUT_DESIGNATIONS.has(p.injury_status ?? ""));
+export function vacatedVolume(
+  index: UsageIndex,
+  team: string,
+  teamPlayers: readonly Player[],
+  designationOf: (player: Player) => string | null = (player) => player.injury_status ?? null,
+): VacatedStarter[] {
+  const injured = teamPlayers.filter((p) => p.team === team && isUsagePlayer(p) && OUT_DESIGNATIONS.has(designationOf(p) ?? ""));
   const injuredIds = new Set(injured.map((p) => p.player_id));
   const out: VacatedStarter[] = [];
   for (const player of injured) {
@@ -287,7 +293,7 @@ export function vacatedVolume(index: UsageIndex, team: string, teamPlayers: read
     if (starterBy.length === 0) continue;
     out.push({
       player_id: player.player_id,
-      designation: player.injury_status ?? "",
+      designation: designationOf(player) ?? "",
       starter_by: starterBy,
       played_weeks: recent.length,
       vacated: recent.length

@@ -1,6 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectedClient } from "./helpers.js";
-import { LEAGUE_ID, PREV_LEAGUE_ID, DRAFT_ID, kcUsageRoutes, p as fixturePlayer, state } from "./fixtures.js";
+import {
+  DRAFT_ID,
+  ESPN_INJURIES_URL,
+  ESPN_NEWS_TAYLOR_URL,
+  ESPN_TEAMS_URL,
+  LEAGUE_ID,
+  PREV_LEAGUE_ID,
+  espnInjuries,
+  espnKcRoutes,
+  espnNewsTaylor,
+  espnTaylorAs,
+  kcUsageRoutes,
+  p as fixturePlayer,
+  players as fixturePlayers,
+  state,
+} from "./fixtures.js";
 
 type Connected = Awaited<ReturnType<typeof connectedClient>>;
 let c: Connected;
@@ -22,6 +37,7 @@ describe("server surface", () => {
         "get_draft_picks",
         "get_drafts",
         "get_free_agents",
+        "get_injury_report",
         "get_league",
         "get_league_history",
         "get_league_rosters",
@@ -30,6 +46,7 @@ describe("server surface", () => {
         "get_matchups",
         "get_nfl_state",
         "get_player",
+        "get_player_news",
         "get_player_stats",
         "get_player_trends",
         "get_playoff_bracket",
@@ -508,7 +525,7 @@ describe("usage tools", () => {
           pos: "TE",
           team: "KC",
           inj: "Out",
-          status: { designation: "Out", source: "sleeper", as_of: data!.status_as_of },
+          status: { designation: "Out", body_part: null, note: null, practice: null, source: "sleeper", as_of: data!.status_as_of },
           starter_by: ["depth_chart", "snap_share"],
           played_weeks: 2,
           vacated: { target_share: 25, carry_share: 0, rz_share: 25 },
@@ -538,5 +555,226 @@ describe("usage tools", () => {
     const pos = await c.call("get_team_usage", { team: "KC", position: "K" });
     expect(pos.result.isError).toBe(true);
     expect(pos.text).toBe("position must be QB, RB, WR or TE.");
+  });
+});
+
+describe("merged status in the usage tools", () => {
+  async function connect(routes: Record<string, unknown> = {}) {
+    return connectedClient(routes);
+  }
+
+  it("get_player_trends takes ESPN's status when it has a designation", async () => {
+    const { data } = await c.call("get_player_trends", { names: ["Jonathan Taylor"] });
+    expect((data!.players as Record<string, unknown>[])[0]!.status).toEqual({
+      designation: "Questionable",
+      body_part: "Ankle",
+      note: "Taylor (ankle) was limited at practice Wednesday.",
+      practice: null,
+      source: "espn",
+      as_of: "2026-10-08T18:00Z",
+    });
+  });
+
+  it("get_player_trends shows Sleeper's designation when ESPN's differs", async () => {
+    const k = await connect(espnTaylorAs("INJURY_STATUS_OUT"));
+    try {
+      const { data } = await k.call("get_player_trends", { names: ["Jonathan Taylor"] });
+      expect((data!.players as Record<string, unknown>[])[0]!.status).toMatchObject({ designation: "Out", source: "espn", sleeper_designation: "Questionable" });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("get_player_trends keeps Sleeper's designation when ESPN lists the player as active", async () => {
+    const k = await connect(espnTaylorAs("INJURY_STATUS_ACTIVE"));
+    try {
+      const { data } = await k.call("get_player_trends", { names: ["Jonathan Taylor"] });
+      expect((data!.players as Record<string, unknown>[])[0]!.status).toMatchObject({
+        designation: "Questionable",
+        body_part: "Ankle",
+        source: "sleeper",
+        espn_designation: null,
+        espn_as_of: "2026-10-08T18:00Z",
+      });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("get_player_trends falls back to Sleeper when ESPN is down", async () => {
+    const k = await connect({ [ESPN_INJURIES_URL]: () => ({ status: 500 }) });
+    try {
+      const { data } = await k.call("get_player_trends", { names: ["Jonathan Taylor"] });
+      expect((data!.players as Record<string, unknown>[])[0]!.status).toMatchObject({ designation: "Questionable", source: "sleeper" });
+      expect(data!.espn_unavailable).toMatch(/^ESPN could not be reached \(ESPN API error \(HTTP 500\)\)/);
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("get_team_usage keeps Kelce vacated when ESPN lists him as active but Sleeper has him Out", async () => {
+    const k = await connectedClient({ ...kcUsageRoutes(), ...espnKcRoutes("INJURY_STATUS_ACTIVE") });
+    try {
+      const { data } = await k.call("get_team_usage", { team: "KC" });
+      const vacated = data!.vacated as Record<string, unknown>[];
+      expect(vacated.map((v) => v.id)).toEqual(["5850"]);
+      expect(vacated[0]!.status).toMatchObject({ designation: "Out", source: "sleeper", espn_designation: null, espn_as_of: "2026-10-09T12:00Z" });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("get_team_usage uses ESPN's designation for a vacated starter when it has one", async () => {
+    const k = await connectedClient({ ...kcUsageRoutes(), ...espnKcRoutes("INJURY_STATUS_OUT") });
+    try {
+      const { data } = await k.call("get_team_usage", { team: "KC" });
+      const [kelce] = data!.vacated as Record<string, unknown>[];
+      expect(kelce!.status).toMatchObject({ designation: "Out", source: "espn", body_part: "Knee", as_of: "2026-10-09T12:00Z" });
+      expect(kelce!.status).not.toHaveProperty("sleeper_designation");
+    } finally {
+      await k.close();
+    }
+  });
+});
+
+describe("get_injury_report", () => {
+  const names = (data: Record<string, unknown> | undefined) => (data!.injuries as { name: string }[]).map((i) => i.name);
+
+  it("merges ESPN designations with Sleeper's for players ESPN does not list", async () => {
+    const { data } = await c.call("get_injury_report", {});
+    expect(names(data)).toEqual(["Jonathan Taylor", "Travis Kelce", "Injured Ian"]);
+    const injuries = data!.injuries as { name: string; status: Record<string, unknown> }[];
+    expect(injuries[0]!.status).toMatchObject({ designation: "Questionable", source: "espn" });
+    expect(injuries[1]!.status).toMatchObject({ designation: "Out", source: "sleeper" });
+    expect(injuries[2]!.status).toMatchObject({ designation: "IR", source: "sleeper" });
+    expect(data!.unmatched).toMatchObject({ count: 0, names: [] });
+    expect(data).not.toHaveProperty("espn_unavailable");
+  });
+
+  it("includes a Questionable player that only Sleeper lists", async () => {
+    const quiet = fixturePlayer("12020", "Quiet", "Questionable", "RB", "DAL", { injury_status: "Questionable" });
+    const k = await connectedClient({ "/players/nfl": { ...fixturePlayers, "12020": quiet } });
+    try {
+      const { data } = await k.call("get_injury_report", { teams: ["DAL"] });
+      expect(data!.injuries).toEqual([expect.objectContaining({ id: "12020", status: expect.objectContaining({ designation: "Questionable", source: "sleeper" }) })]);
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("keeps Sleeper's Questionable when ESPN lists the player as active", async () => {
+    const k = await connectedClient(espnTaylorAs("INJURY_STATUS_ACTIVE"));
+    try {
+      const { data } = await k.call("get_injury_report", { teams: ["IND"] });
+      expect(data!.injuries).toEqual([
+        expect.objectContaining({
+          id: "6813",
+          status: expect.objectContaining({ designation: "Questionable", source: "sleeper", espn_designation: null, espn_as_of: "2026-10-08T18:00Z" }),
+        }),
+      ]);
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("filters by team, position and roster", async () => {
+    expect(names((await c.call("get_injury_report", { teams: ["ind"] })).data)).toEqual(["Jonathan Taylor"]);
+    expect(names((await c.call("get_injury_report", { positions: ["WR"] })).data)).toEqual(["Injured Ian"]);
+    expect(names((await c.call("get_injury_report", { league_id: LEAGUE_ID, username: "alice" })).data)).toEqual(["Jonathan Taylor", "Travis Kelce"]);
+    const bad = await c.call("get_injury_report", { positions: ["K"] });
+    expect(bad.result.isError).toBe(true);
+    expect(bad.text).toBe("positions must be QB, RB, WR or TE (got K).");
+  });
+
+  it("counts ESPN entries it cannot link, by name", async () => {
+    const stranger = {
+      id: "900099",
+      status: "Out",
+      date: "2026-10-08T18:00Z",
+      type: { name: "INJURY_STATUS_OUT" },
+      athlete: { displayName: "Nobody Special", position: { name: "Wide Receiver" }, links: [{ href: "https://www.espn.com/nfl/player/_/id/555/nobody-special" }] },
+    };
+    const k = await connectedClient({ [ESPN_INJURIES_URL]: { injuries: [...espnInjuries.injuries, { injuries: [stranger] }] } });
+    try {
+      const { data } = await k.call("get_injury_report", {});
+      expect(data!.unmatched).toMatchObject({ count: 1, names: ["Nobody Special"] });
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("uses Sleeper's designations alone when ESPN is down", async () => {
+    const k = await connectedClient({ [ESPN_INJURIES_URL]: () => ({ status: 500 }) });
+    try {
+      const all = await k.call("get_injury_report", {});
+      expect(names(all.data)).toEqual(["Jonathan Taylor", "Travis Kelce", "Injured Ian"]);
+      expect((all.data!.injuries as { status: { source: string } }[]).every((i) => i.status.source === "sleeper")).toBe(true);
+      expect(all.data!.espn_unavailable).toMatch(/^ESPN could not be reached/);
+      expect(all.data).not.toHaveProperty("unmatched");
+      expect(names((await k.call("get_injury_report", { teams: ["KC"] })).data)).toEqual(["Travis Kelce"]);
+    } finally {
+      await k.close();
+    }
+  });
+});
+
+describe("get_player_news", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-09T00:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns recent ESPN news per player and lists players ESPN cannot link", async () => {
+    const { data } = await c.call("get_player_news", { names: ["Jonathan Taylor", "Patrick Mahomes"] });
+    expect(data!.hours).toBe(72);
+    expect(data!.players).toEqual([
+      expect.objectContaining({
+        id: "6813",
+        espn_id: "4242335",
+        news: [
+          {
+            headline: "Taylor limited Wednesday",
+            description: "Jonathan Taylor was limited at practice.",
+            story: "Taylor (ankle) was limited at practice Wednesday.",
+            published: "2026-10-08T19:00:00Z",
+            source: "espn",
+            as_of: "2026-10-08T19:00:00Z",
+          },
+        ],
+      }),
+    ]);
+    expect((data!.no_espn_id as { id: string }[]).map((p) => p.id)).toEqual(["4046"]);
+  });
+
+  it("drops news older than the requested window", async () => {
+    const { data } = await c.call("get_player_news", { names: ["Jonathan Taylor"], hours: 1 });
+    expect((data!.players as { news: unknown[] }[])[0]!.news).toEqual([]);
+  });
+
+  it("shortens long stories at a word boundary", async () => {
+    const story = "word ".repeat(200).trim();
+    const k = await connectedClient({ [ESPN_NEWS_TAYLOR_URL]: { feed: [{ ...espnNewsTaylor.feed[0], story }] } });
+    try {
+      const { data } = await k.call("get_player_news", { names: ["Jonathan Taylor"] });
+      const shortened = (data!.players as { news: { story: string }[] }[])[0]!.news[0]!.story;
+      expect(shortened.length).toBeLessThanOrEqual(401);
+      expect(shortened.endsWith("word…")).toBe(true);
+    } finally {
+      await k.close();
+    }
+  });
+
+  it("reports an ESPN failure through guard", async () => {
+    const k = await connectedClient({ [ESPN_TEAMS_URL]: () => ({ status: 500 }) });
+    try {
+      const res = await k.call("get_player_news", { names: ["Jonathan Taylor"] });
+      expect(res.result.isError).toBe(true);
+      expect(res.text).toBe("ESPN request failed: ESPN API error (HTTP 500)");
+    } finally {
+      await k.close();
+    }
   });
 });

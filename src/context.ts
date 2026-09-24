@@ -1,4 +1,5 @@
 import { EspnClient } from "./espn/client.js";
+import { EspnIdMapLoader } from "./espn/idmap.js";
 import { SleeperClient, SleeperNotFoundError } from "./sleeper/client.js";
 import { SleeperGraphqlClient } from "./sleeper/graphql.js";
 import { PlayerStore } from "./sleeper/players.js";
@@ -10,6 +11,8 @@ export interface ServerContext {
   players: PlayerStore;
   /** ESPN's keyless injury, news, team and roster endpoints. */
   espn: EspnClient;
+  /** ESPN <-> Sleeper id map, built on first use and kept for 24 hours. */
+  espnIds: EspnIdMapLoader;
   log: (message: string) => void;
   /** Username or user_id assumed when a tool is called without a user/team selector ("my team"). */
   defaultUser: string | null;
@@ -46,13 +49,14 @@ export function createContext(options: ContextOptions = {}): ServerContext {
   const client = options.client ?? new SleeperClient();
   const players = options.players ?? new PlayerStore(client, { cacheDir: options.cacheDir, log });
   const espn = options.espn ?? new EspnClient();
+  const espnIds = new EspnIdMapLoader(espn, players);
   const defaultUser = options.defaultUser?.trim() || null;
   let auth: SleeperGraphqlClient | null = options.auth ?? null;
   if (!auth && (options.sleeperToken?.trim() || (options.sleeperEmail?.trim() && options.sleeperPassword))) {
     auth = new SleeperGraphqlClient({ token: options.sleeperToken, email: options.sleeperEmail, password: options.sleeperPassword, log });
   }
   const allowWrites = Boolean(auth) && (options.allowWrites ?? true);
-  return { client, players, espn, log, defaultUser, auth, allowWrites };
+  return { client, players, espn, espnIds, log, defaultUser, auth, allowWrites };
 }
 
 /** Thrown for user-facing problems (bad input, unknown league, ...). The message is shown to the model verbatim. */
