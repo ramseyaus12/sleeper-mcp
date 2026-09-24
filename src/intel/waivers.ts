@@ -40,6 +40,8 @@ export interface WaiverTuning {
    * of the starter the candidate would replace (the weakest eligible starter, as in startGain).
    */
   stashSort?: "score" | "proj_next3" | "gain_next3";
+  /** Most stash entries per position (a player's first fantasy position), applied after sorting (default no cap). */
+  stashPerPosition?: number;
 }
 
 function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
@@ -295,10 +297,18 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     const replacedNext3 = (e: WaiverEntry) => (e.replaces && e.replaces.player_id !== "0" ? (options.starterNext3?.(e.replaces.player_id) ?? 0) : 0);
     stash.sort((a, b) => b.proj_next3 - replacedNext3(b) - (a.proj_next3 - replacedNext3(a)));
   } else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
+  const perPosition = new Map<string, number>();
+  const stashListed = stash.filter((e) => {
+    if (tuning?.stashPerPosition === undefined) return true;
+    const position = e.positions[0] ?? "";
+    const count = (perPosition.get(position) ?? 0) + 1;
+    perPosition.set(position, count);
+    return count <= tuning.stashPerPosition;
+  });
   irStash.sort((a, b) => (a.search_rank ?? Number.MAX_SAFE_INTEGER) - (b.search_rank ?? Number.MAX_SAFE_INTEGER));
   return {
     start_now: startNowListed.slice(0, limit),
-    stash: stash.slice(0, Math.min(limit, t.stashLimit)),
+    stash: stashListed.slice(0, Math.min(limit, t.stashLimit)),
     ir_stash: irStash.slice(0, t.irStashLimit),
   };
 }

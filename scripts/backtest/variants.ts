@@ -26,6 +26,11 @@ const VARIANTS: { name: string; label: string; tuning: WaiverTuning | undefined 
     tuning: { stashSort: "gain_next3" },
   },
   {
+    name: "V8",
+    label: "V7's ranking, at most one stash per position, then the top 5",
+    tuning: { stashSort: "gain_next3", stashPerPosition: 1 },
+  },
+  {
     name: "signal",
     label: "injury opportunity or rising/breakout required, rank by stashScore, limit 10",
     tuning: { stashRequireSignal: true, stashSort: "score", thresholds: { stashLimit: 10 } },
@@ -130,22 +135,25 @@ async function main(): Promise<void> {
   }
 
   console.log("\nStash vs the starter each pick would replace and vs the baseline free agent, all 12 combinations combined, with the position mix of the picks:\n");
-  console.log("| Variant | vs replaced 3w | vs replaced ROS | wins 3w | vs baseline 3w | vs baseline ROS | wins 3w | positions |");
-  console.log("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  console.log("| Variant | vs replaced 3w | vs replaced ROS | wins 3w | vs baseline 3w | vs baseline ROS | wins 3w | = baseline | positions |");
+  console.log("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const variant of VARIANTS) {
     const r = results.get(variant.name);
     if (!r) continue;
     const m = r.all;
-    console.log(`| ${variant.name} | ${fmt(m.rep3w)} | ${fmt(m.repRos)} | ${pct(m.repWins3w)} | ${fmt(m.gain3w)} | ${fmt(m.gainRos)} | ${pct(m.wins3w)} | ${positionMix(r.stash)} |`);
+    console.log(`| ${variant.name} | ${fmt(m.rep3w)} | ${fmt(m.repRos)} | ${pct(m.repWins3w)} | ${fmt(m.gain3w)} | ${fmt(m.gainRos)} | ${pct(m.wins3w)} | ${pct(m.sameAsBaseline)} | ${positionMix(r.stash)} |`);
   }
 
-  const v7 = results.get("V7");
-  if (current && v7) {
+  // Every variant except the reference "signal" rule, compared with the default in detail.
+  const detailed = VARIANTS.filter((v) => v.name !== "signal");
+  for (const variant of detailed) {
+    const r = results.get(variant.name);
+    if (!current || !r || variant.name === "current") continue;
     let rep3 = 0;
     let repRos = 0;
     let base3 = 0;
     let baseRos = 0;
-    v7.perCombo.forEach((m, i) => {
+    r.perCombo.forEach((m, i) => {
       const c = current.perCombo[i];
       if (!c || m.n === 0) return;
       if (m.rep3w !== null && c.rep3w !== null && m.rep3w > c.rep3w) rep3++;
@@ -153,19 +161,19 @@ async function main(): Promise<void> {
       if (m.gain3w !== null && c.gain3w !== null && m.gain3w > c.gain3w) base3++;
       if (m.gainRos !== null && c.gainRos !== null && m.gainRos > c.gainRos) baseRos++;
     });
-    console.log(`\nV7 beats the default (V6) in: vs replaced 3w ${rep3}/12, ROS ${repRos}/12; vs baseline 3w ${base3}/12, ROS ${baseRos}/12.`);
-    console.log("\nPer combination, default (V6) and V7 (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):\n");
-    console.log("| Combination | V6 | V7 |");
-    console.log("| --- | --- | --- |");
-    combos.forEach((combo, i) => {
-      const cell = (name: string) => {
-        const r = results.get(name);
-        const m = r?.perCombo[i];
-        return m ? `${fmt(m.rep3w)} / ${fmt(m.repRos)}; ${fmt(m.gain3w)} / ${fmt(m.gainRos)}; ${positionMix(r!.stash.filter((g) => r!.combo.get(g) === i))}` : "-";
-      };
-      console.log(`| ${comboLabel(combo)} | ${cell("current")} | ${cell("V7")} |`);
-    });
+    console.log(`\n${variant.name} beats the default in: vs replaced 3w ${rep3}/12, ROS ${repRos}/12; vs baseline 3w ${base3}/12, ROS ${baseRos}/12.`);
   }
+  console.log(`\nPer combination (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):\n`);
+  console.log(`| Combination | ${detailed.map((v) => v.name).join(" | ")} |`);
+  console.log(`| --- | ${detailed.map(() => "---").join(" | ")} |`);
+  combos.forEach((combo, i) => {
+    const cell = (name: string) => {
+      const r = results.get(name);
+      const m = r?.perCombo[i];
+      return r && m ? `${fmt(m.rep3w)} / ${fmt(m.repRos)}; ${fmt(m.gain3w)} / ${fmt(m.gainRos)}; ${positionMix(r.stash.filter((g) => r.combo.get(g) === i))}` : "-";
+    };
+    console.log(`| ${comboLabel(combo)} | ${detailed.map((v) => cell(v.name)).join(" | ")} |`);
+  });
 
   const horizons = new Map<string, number>();
   for (const g of current?.stash ?? []) horizons.set(g.horizon ?? "-", (horizons.get(g.horizon ?? "-") ?? 0) + 1);

@@ -350,3 +350,54 @@ Per combination, default (V6) and V7 (vs replaced 3w / ROS; vs baseline 3w / ROS
 - The position mix moves from QB 61% (V6) to RB 39%, TE 32%, WR 16%, QB 12% (V7). Which position V7 favors depends on the draft slot: TE for slot 1, RB for slot 5, spread out for slot 10.
 - V7 ranks by a projected version of the "vs replaced" measure, so part of its lead there comes from choosing on the quantity being graded. Neither measure alone settles the choice: V6 picks the stronger player at a position the team may not need; V7 picks positions the team needs but not always the best player available there.
 
+## Stash variant V8
+
+- V8: V7's ranking (`proj_next3` minus the replaced starter's 3-week projection), at most one stash per position (a player's first fantasy position), then the top 5. It runs through `stashPerPosition: 1` in `WaiverTuning`.
+
+Output of `npx tsx scripts/backtest/variants.ts`, run 2026-09-24 against the disk cache. "= baseline" is how often a pick is the highest week-N-projected free agent at his position.
+
+Stash vs the baseline free agent (highest week-N-projected at the same position), all 12 combinations combined.
+'Beats current' counts combinations where the variant's mean gain over the baseline is higher than today's stash; a combination with no stash entries does not count as a win.
+
+| Variant | Rule | stash per week | = baseline | gain 3w | gain ROS | wins 3w | beats current 3w | beats current ROS | beats on both |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current | default (V6): projection floor only, rank by proj_next3, limit 5 | 5.0 | 13% | +2.4 | +8.3 | 48% | - | - | - |
+| V7 | projection floor only, rank by proj_next3 minus the replaced starter's 3-week projection, limit 5 | 5.0 | 7% | -1.8 | -8.8 | 45% | 4/12 | 0/12 | 0/12 |
+| V8 | V7's ranking, at most one stash per position, then the top 5 | 4.0 | 18% | +5.1 | +5.0 | 52% | 10/12 | 4/12 | 4/12 |
+| signal | injury opportunity or rising/breakout required, rank by stashScore, limit 10 | 10.0 | 1% | -13.8 | -39.6 | 25% | 0/12 | 0/12 | 0/12 |
+
+Stash vs the starter each pick would replace and vs the baseline free agent, all 12 combinations combined, with the position mix of the picks:
+
+| Variant | vs replaced 3w | vs replaced ROS | wins 3w | vs baseline 3w | vs baseline ROS | wins 3w | = baseline | positions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current | -0.1 | -3.5 | 50% | +2.4 | +8.3 | 48% | 13% | QB 61%, WR 23%, RB 10%, TE 7% |
+| V7 | +11.5 | +23.2 | 81% | -1.8 | -8.8 | 45% | 7% | RB 39%, TE 32%, WR 16%, QB 12% |
+| V8 | +4.5 | +4.5 | 61% | +5.1 | +5.0 | 52% | 18% | TE 25%, RB 25%, WR 25%, QB 25% |
+| signal | -13.0 | -32.7 | 24% | -13.8 | -39.6 | 25% | 1% | RB 41%, WR 33%, TE 21%, QB 5% |
+
+V7 beats the default in: vs replaced 3w 12/12, ROS 10/12; vs baseline 3w 4/12, ROS 0/12.
+
+V8 beats the default in: vs replaced 3w 9/12, ROS 8/12; vs baseline 3w 10/12, ROS 4/12.
+
+Per combination (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):
+
+| Combination | current | V7 | V8 |
+| --- | --- | --- | --- |
+| slot 1, rivals off, long absence off | -0.8 / +11.3; -0.1 / +17.5; QB 87%, RB 10%, WR 3% | +17.2 / +23.5; +5.3 / +3.5; TE 48%, RB 22%, QB 18%, WR 12% | +7.2 / +13.7; +6.4 / +10.5; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals off, long absence off | -3.8 / -41.4; -4.2 / +7.7; QB 82%, WR 17%, RB 2% | +12.7 / +35.0; -9.8 / -1.8; RB 67%, TE 22%, QB 10%, WR 2% | +6.1 / +2.6; +3.0 / +5.9; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals off, long absence off | +6.7 / +11.0; -2.2 / +11.3; QB 92%, RB 7%, TE 2% | +9.0 / +9.5; -5.4 / +0.1; WR 28%, RB 28%, QB 25%, TE 18% | +6.7 / -0.5; -0.1 / +5.0; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals on, long absence off | +1.3 / +18.4; +7.0 / -1.5; QB 38%, WR 37%, RB 18%, TE 7% | +11.1 / +23.2; +3.1 / -15.6; TE 63%, WR 17%, RB 12%, QB 8% | +4.0 / +17.8; +10.5 / +9.5; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals on, long absence off | -6.8 / -17.8; +9.1 / +16.0; QB 38%, WR 38%, TE 20%, RB 3% | +13.3 / +46.9; -6.6 / -27.9; RB 80%, TE 15%, QB 5% | +0.8 / +2.0; +8.6 / +8.7; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals on, long absence off | +4.4 / +3.4; +4.4 / +2.7; QB 50%, WR 28%, RB 13%, TE 8% | +10.6 / +12.4; +6.0 / +0.9; WR 35%, TE 28%, RB 27%, QB 10% | +6.8 / +6.4; +7.1 / +5.3; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals off, long absence on | -0.4 / +11.8; +0.6 / +19.0; QB 83%, RB 12%, WR 5% | +18.4 / +26.1; +5.5 / +5.4; TE 45%, RB 22%, QB 20%, WR 13% | +7.5 / +14.1; +6.7 / +11.0; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals off, long absence on | -3.8 / -40.7; -4.2 / +8.4; QB 80%, WR 18%, RB 2% | +12.0 / +31.2; -10.3 / -5.0; RB 65%, TE 23%, QB 10%, WR 2% | +6.1 / +2.2; +3.0 / +5.5; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals off, long absence on | +7.5 / +13.5; -1.1 / +12.9; QB 88%, RB 10%, TE 2% | +8.4 / +9.7; -5.7 / +1.6; RB 28%, QB 27%, WR 27%, TE 18% | +6.5 / -0.8; -0.2 / +4.7; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals on, long absence on | +0.1 / +14.8; +6.3 / -6.4; WR 45%, RB 25%, QB 23%, TE 7% | +8.0 / +17.8; +1.9 / -23.1; TE 62%, WR 20%, RB 13%, QB 5% | -0.1 / +4.4; +6.4 / -4.0; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals on, long absence on | -8.8 / -20.4; +10.0 / +15.8; WR 48%, QB 27%, TE 23%, RB 2% | +10.8 / +41.8; -8.9 / -34.0; RB 83%, TE 15%, QB 2% | -1.3 / -5.8; +5.5 / +0.8; RB 26%, TE 26%, WR 26%, QB 23% |
+| slot 10, rivals on, long absence on | +2.8 / -6.5; +3.0 / -3.7; QB 40%, WR 33%, RB 17%, TE 10% | +6.7 / +1.6; +3.1 / -9.8; WR 42%, TE 28%, RB 23%, QB 7% | +3.9 / -1.8; +4.2 / -2.9; QB 25%, TE 25%, RB 25%, WR 25% |
+
+**Reading it:**
+- V8 lands between V6 and V7 on "vs replaced": +4.5 over 3 weeks and +4.5 rest of season (V7: +11.5 and +23.2; V6: -0.1 and -3.5).
+- V8 has the best 3-week "vs baseline" gain of the three: +5.1 (V6 +2.4, V7 -1.8). Over the rest of the season it is +5.0, behind V6 (+8.3). Its picks match the baseline player most often (18%; V6 13%, V7 7%).
+- The replay covers QB, RB, WR and TE only, so one per position caps V8 at 4 stashes a week and makes its mix exactly 25% per position. That means one backup QB every week, even in this 1-QB league. With K and DEF in the pool, the live tool could list 5.
+
