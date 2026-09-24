@@ -5,7 +5,18 @@
  */
 import { SLOT_ELIGIBILITY } from "../format.js";
 import type { Player } from "../sleeper/types.js";
-import { OUT_DESIGNATIONS, THRESHOLDS, type ShareKey, type Trend } from "./usage.js";
+import {
+  OUT_DESIGNATIONS,
+  playerWeeks,
+  THRESHOLDS,
+  trend,
+  usagePositions,
+  vacatedVolume,
+  type PlayerWeek,
+  type ShareKey,
+  type Trend,
+  type UsageIndex,
+} from "./usage.js";
 
 /** Designations an IR slot accepts. Sleeper's league settings here carry no reserve_allow_* flags, so only these two. */
 export const IR_ELIGIBLE: ReadonlySet<string> = new Set(["IR", "PUP"]);
@@ -334,6 +345,142 @@ export function dropCandidates(bench: readonly BenchInput[], options: DropOption
     drops.push({ ...player, action: "drop", replace_with: replaceWith, reasons });
   }
   return { drops: drops.slice(0, limit), bench_watch: benchWatch.slice(0, limit) };
+}
+
+export interface WaiverTargetsInput {
+  /** Every player the pool draws from; also the teammates checked for injured starters. */
+  players: readonly Player[];
+  /** Stat rows for the usage window. */
+  index: UsageIndex;
+  /** Every player on any roster in the league, including IR and taxi. */
+  rostered: ReadonlySet<string>;
+  /** The team getting advice. */
+  roster: { players: readonly string[]; starters: readonly string[]; reserve: readonly string[]; taxi: readonly string[] };
+  optimalLineup: readonly LineupSlot[];
+  /** Positions to consider for pickups. */
+  positions: ReadonlySet<string>;
+  /** League-scored projection for the target week (0 when there is none). */
+  proj: (playerId: string) => number;
+  /** League-scored projection 1 or 2 weeks after the target week, or null when there is none. */
+  projAhead: (playerId: string, weeksAhead: 1 | 2) => number | null;
+  /** Each player's designation and body part (merged status in the tool). */
+  statusOf: (playerId: string) => { designation: string | null; body_part: string | null };
+  refOf: (playerId: string) => { name: string; pos: string | null };
+  trendingAdds: ReadonlyMap<string, number>;
+  irSlots: number;
+  limit: number;
+  week: number;
+}
+
+export interface WaiverTargets extends WaiverBuckets {
+  drop_candidates: DropEntry[];
+  bench_watch: BenchWatchEntry[];
+  /** Usage trend and weekly history for every player in the index. */
+  trends: Map<string, Trend>;
+  histories: Map<string, PlayerWeek[]>;
+}
+
+/**
+ * Everything get_waiver_targets computes from fetched data: usage trends, injured-starter opportunities
+ * across every team, the candidate pool, the buckets, and the bench's drop and bench_watch entries.
+ */
+export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
+  const { index, statusOf, refOf, proj, projAhead } = input;
+  const byId = new Map(input.players.map((p) => [p.player_id, p]));
+
+  const histories = new Map<string, PlayerWeek[]>();
+  const trends = new Map<string, Trend>();
+  for (const byPlayer of index.rows.values()) {
+    for (const id of byPlayer.keys()) {
+      if (trends.has(id)) continue;
+      const history = playerWeeks(index, id);
+      histories.set(id, history);
+      trends.set(id, trend(history, usagePositions(index, id, byId.get(id))));
+    }
+  }
+
+  const byTeam = new Map<string, Player[]>();
+  for (const p of input.players) {
+    if (!p.team) continue;
+    const list = byTeam.get(p.team);
+    if (list) list.push(p);
+    else byTeam.set(p.team, [p]);
+  }
+  const opportunities = new Map<string, Opportunity>();
+  for (const [team, teamPlayers] of byTeam) {
+    for (const starter of vacatedVolume(index, team, teamPlayers, (p) => statusOf(p.player_id).designation)) {
+      const starterRef = refOf(starter.player_id);
+      for (const b of starter.beneficiaries) {
+        const opportunity: Opportunity = {
+          starter_id: starter.player_id,
+          starter_name: starterRef.name,
+          starter_pos: starterRef.pos,
+          designation: starter.designation,
+          body_part: statusOf(starter.player_id).body_part,
+          vacated: starter.vacated,
+          via: b.via,
+          target_share_change: b.target_share_change,
+          carry_share_change: b.carry_share_change,
+        };
+        const current = opportunities.get(b.player_id);
+        if (!current || opportunityWeight(opportunity) > opportunityWeight(current)) opportunities.set(b.player_id, opportunity);
+      }
+    }
+  }
+
+  const rising = new Set([...trends].filter(([, t]) => t.label === "rising" || t.label === "breakout").map(([id]) => id));
+  const pool = candidatePool({
+    players: input.players,
+    rostered: input.rostered,
+    positions: input.positions,
+    trendingAdds: input.trendingAdds,
+    beneficiaries: new Set(opportunities.keys()),
+    rising,
+  });
+  const candidates: CandidateInput[] = pool.map((p) => {
+    const status = statusOf(p.player_id);
+    return {
+      player_id: p.player_id,
+      positions: positionsOf(p),
+      search_rank: p.search_rank ?? null,
+      proj: proj(p.player_id),
+      next_proj: projAhead(p.player_id, 1),
+      next2_proj: projAhead(p.player_id, 2),
+      designation: status.designation,
+      body_part: status.body_part,
+      trend: trends.get(p.player_id) ?? null,
+      trending_adds: input.trendingAdds.get(p.player_id) ?? null,
+      opportunity: opportunities.get(p.player_id) ?? null,
+    };
+  });
+  const nameOf = (id: string) => refOf(id).name;
+  const buckets = waiverBuckets(candidates, { optimalLineup: input.optimalLineup, irSlots: input.irSlots, nameOf, limit: input.limit, week: input.week });
+
+  const onField = new Set([...input.roster.starters, ...input.roster.reserve, ...input.roster.taxi]);
+  const bench: BenchInput[] = input.roster.players
+    .filter((id) => id && id !== "0" && !onField.has(id))
+    .map((id) => {
+      const status = statusOf(id);
+      const own = proj(id);
+      return {
+        player_id: id,
+        proj: own,
+        proj_next3: projNext3({ proj: own, next_proj: projAhead(id, 1), next2_proj: projAhead(id, 2) }),
+        search_rank: byId.get(id)?.search_rank ?? null,
+        designation: status.designation,
+        body_part: status.body_part,
+        trend: trends.get(id) ?? null,
+      };
+    });
+  const { drops, bench_watch } = dropCandidates(bench, {
+    irSlots: input.irSlots,
+    limit: input.limit,
+    replacements: [...buckets.start_now, ...buckets.stash],
+    nameOf,
+    week: input.week,
+  });
+
+  return { ...buckets, drop_candidates: drops, bench_watch, trends, histories };
 }
 
 /** "TE Travis Kelce (Out, knee) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed" */

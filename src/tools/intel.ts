@@ -22,22 +22,7 @@ import {
 } from "../intel/usage.js";
 import { splitNews } from "../intel/news.js";
 import { espnDesignation, espnPosition, indexInjuries, mergeStatus, type InjuryIndex, type PlayerStatus } from "../intel/status.js";
-import {
-  candidatePool,
-  dropCandidates,
-  irSlotsOpen,
-  opportunityWeight,
-  positionsOf,
-  projNext3,
-  startablePositions,
-  waiverBuckets,
-  type BenchInput,
-  type CandidateInput,
-  type LineupSlot,
-  type Opportunity,
-  type WaiverEntry,
-} from "../intel/waivers.js";
-import type { Player } from "../sleeper/types.js";
+import { irSlotsOpen, startablePositions, waiverTargets, type LineupSlot, type Opportunity, type WaiverEntry } from "../intel/waivers.js";
 import { guard, leagueIdSchema, positionSchema, teamSelectorShape, weekSchema } from "./shared.js";
 import { lineupAnalysis } from "./stats.js";
 
@@ -313,101 +298,25 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         const lineup = lineupAnalysis(ctx, bundle, roster.roster_id, roster.players ?? [], roster.starters ?? [], projections, target);
         const optimal: LineupSlot[] = lineup.optimal_lineup.map((p) => ({ player_id: p.id, slot: p.slot ?? "", pts: p.pts ?? 0 }));
 
-        const histories = new Map<string, PlayerWeek[]>();
-        const trends = new Map<string, Trend>();
-        for (const byPlayer of usage.index.rows.values()) {
-          for (const id of byPlayer.keys()) {
-            if (trends.has(id)) continue;
-            const history = playerWeeks(usage.index, id);
-            histories.set(id, history);
-            trends.set(id, trend(history, usagePositions(usage.index, id, ctx.players.raw(id))));
-          }
-        }
-
-        const all = ctx.players.all();
-        const byTeam = new Map<string, Player[]>();
-        for (const p of all) {
-          if (!p.team) continue;
-          const list = byTeam.get(p.team);
-          if (list) list.push(p);
-          else byTeam.set(p.team, [p]);
-        }
-        const opportunities = new Map<string, Opportunity>();
-        for (const [team, teamPlayers] of byTeam) {
-          for (const starter of vacatedVolume(usage.index, team, teamPlayers, (p) => statuses.statusOf(p.player_id).designation)) {
-            const starterRef = ctx.players.ref(starter.player_id);
-            for (const b of starter.beneficiaries) {
-              const opportunity: Opportunity = {
-                starter_id: starter.player_id,
-                starter_name: starterRef.name,
-                starter_pos: starterRef.pos,
-                designation: starter.designation,
-                body_part: statuses.statusOf(starter.player_id).body_part,
-                vacated: starter.vacated,
-                via: b.via,
-                target_share_change: b.target_share_change,
-                carry_share_change: b.carry_share_change,
-              };
-              const current = opportunities.get(b.player_id);
-              if (!current || opportunityWeight(opportunity) > opportunityWeight(current)) opportunities.set(b.player_id, opportunity);
-            }
-          }
-        }
-
         const rostered = new Set(bundle.rosters.flatMap((r) => [...(r.players ?? []), ...(r.reserve ?? []), ...(r.taxi ?? [])]));
-        const trendingAdds = new Map(trending.map((t) => [t.player_id, t.count]));
-        const rising = new Set([...trends].filter(([, t]) => t.label === "rising" || t.label === "breakout").map(([id]) => id));
-        const pool = candidatePool({
-          players: all,
-          rostered,
-          positions: position ? new Set([position]) : startable,
-          trendingAdds,
-          beneficiaries: new Set(opportunities.keys()),
-          rising,
-        });
-        const candidates: CandidateInput[] = pool.map((p) => {
-          const status = statuses.statusOf(p.player_id);
-          return {
-            player_id: p.player_id,
-            positions: positionsOf(p),
-            search_rank: p.search_rank ?? null,
-            proj: projOf(p.player_id),
-            next_proj: nextProjOf(p.player_id),
-            next2_proj: next2ProjOf(p.player_id),
-            designation: status.designation,
-            body_part: status.body_part,
-            trend: trends.get(p.player_id) ?? null,
-            trending_adds: trendingAdds.get(p.player_id) ?? null,
-            opportunity: opportunities.get(p.player_id) ?? null,
-          };
-        });
-
         const irOpen = irSlotsOpen(bundle.league.settings?.reserve_slots, bundle.league.roster_positions, roster.reserve);
-        const buckets = waiverBuckets(candidates, { optimalLineup: optimal, irSlots: irOpen, nameOf: (id) => ctx.players.ref(id).name, limit, week: target });
-
-        const onField = new Set([...(roster.starters ?? []), ...(roster.reserve ?? []), ...(roster.taxi ?? [])]);
-        const bench: BenchInput[] = (roster.players ?? [])
-          .filter((id) => id && id !== "0" && !onField.has(id))
-          .map((id) => {
-            const status = statuses.statusOf(id);
-            const proj = projOf(id);
-            return {
-              player_id: id,
-              proj,
-              proj_next3: projNext3({ proj, next_proj: nextProjOf(id), next2_proj: next2ProjOf(id) }),
-              search_rank: ctx.players.raw(id)?.search_rank ?? null,
-              designation: status.designation,
-              body_part: status.body_part,
-              trend: trends.get(id) ?? null,
-            };
-          });
-        const { drops, bench_watch: benchWatch } = dropCandidates(bench, {
+        const targets = waiverTargets({
+          players: ctx.players.all(),
+          index: usage.index,
+          rostered,
+          roster: { players: roster.players ?? [], starters: roster.starters ?? [], reserve: roster.reserve ?? [], taxi: roster.taxi ?? [] },
+          optimalLineup: optimal,
+          positions: position ? new Set([position]) : startable,
+          proj: projOf,
+          projAhead: (id, weeksAhead) => (weeksAhead === 1 ? nextProjOf(id) : next2ProjOf(id)),
+          statusOf: (id) => statuses.statusOf(id),
+          refOf: (id) => ctx.players.ref(id),
+          trendingAdds: new Map(trending.map((t) => [t.player_id, t.count])),
           irSlots: irOpen,
           limit,
-          replacements: [...buckets.start_now, ...buckets.stash],
-          nameOf: (id) => ctx.players.ref(id).name,
           week: target,
         });
+        const { histories, drop_candidates: drops, bench_watch: benchWatch } = targets;
 
         const usageOf = (id: string, t: Trend | null) => usageSummary(histories.get(id), t);
         const next3 = (proj: number, next: number | null, next2: number | null, total: number) => ({
@@ -447,9 +356,9 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           ir_slots_open: irOpen,
           note: WAIVER_NOTE,
           ...espnUnavailable(statuses),
-          start_now: buckets.start_now.map(shape),
-          stash: buckets.stash.map(shape),
-          ir_stash: buckets.ir_stash.map((e) => ({ ...shape(e), search_rank: e.search_rank })),
+          start_now: targets.start_now.map(shape),
+          stash: targets.stash.map(shape),
+          ir_stash: targets.ir_stash.map((e) => ({ ...shape(e), search_rank: e.search_rank })),
           drop_candidates: drops.map((d) => ({
             ...ctx.players.ref(d.player_id),
             action: d.action,
