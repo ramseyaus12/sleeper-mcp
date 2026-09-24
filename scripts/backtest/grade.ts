@@ -1,9 +1,11 @@
 /**
  * Grades each suggestion by actual league-scored points: the suggested player against the player he
  * replaces and against the baseline free agent, over week N, weeks N to N+2, and week N to the end week.
+ * An ir_stash fills an otherwise empty IR slot, so it is graded against 0 (no baseline), with the number
+ * of weeks he played from the suggestion through the end week.
  */
 import type { Bucket, SimResult, Suggestion } from "./simulate.js";
-import { actualPoints, type Season } from "./season.js";
+import { actualPoints, offSnaps, type Season } from "./season.js";
 
 export const WINDOWS = ["1w", "3w", "ros"] as const;
 export type Window = (typeof WINDOWS)[number];
@@ -13,6 +15,8 @@ export interface Graded extends Suggestion {
   vsReplaced: Record<Window, number> | null;
   vsBaseline: Record<Window, number> | null;
   sameAsBaseline: boolean;
+  /** ir_stash only: weeks with an offensive snap from the suggestion week through the end week. */
+  weeksPlayed?: number;
 }
 
 function windowPoints(season: Season, id: string, week: number, endWeek: number): Record<Window, number> {
@@ -31,6 +35,11 @@ function minus(a: Record<Window, number>, b: Record<Window, number>): Record<Win
 export function grade(season: Season, result: SimResult, endWeek: number): Graded[] {
   return result.suggestions.map((s) => {
     const points = windowPoints(season, s.player_id, s.week, endWeek);
+    if (s.bucket === "ir_stash") {
+      let weeksPlayed = 0;
+      for (let w = s.week; w <= endWeek; w++) if (offSnaps(season.stats.get(w)?.get(s.player_id)) > 0) weeksPlayed++;
+      return { ...s, points, vsReplaced: points, vsBaseline: null, sameAsBaseline: false, weeksPlayed };
+    }
     const replaced = s.replaced_id ? windowPoints(season, s.replaced_id, s.week, endWeek) : null;
     const base = s.baseline_id ? windowPoints(season, s.baseline_id, s.week, endWeek) : null;
     return {

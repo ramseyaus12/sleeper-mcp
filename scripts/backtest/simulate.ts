@@ -4,7 +4,7 @@
  * grading. Rivals (optional) then claim free agents, which shapes the pool for later weeks.
  */
 import { buildUsageIndex, THRESHOLDS, type WeekRows } from "../../src/intel/usage.js";
-import { irSlotsOpen, projNext3, waiverTargets, type Horizon, type LineupSlot } from "../../src/intel/waivers.js";
+import { irSlotsOpen, projNext3, waiverTargets, type Horizon, type LineupSlot, type WaiverTuning } from "../../src/intel/waivers.js";
 import type { ServerContext } from "../../src/context.js";
 import type { Player, PlayerMap, StatRow } from "../../src/sleeper/types.js";
 import { lineupAnalysis } from "../../src/tools/stats.js";
@@ -36,6 +36,8 @@ export interface SimConfig {
   /** Completed weeks in the usage window, as in the tools. */
   usageWeeks: number;
   limit: number;
+  /** Overrides for the waiver functions (stash experiments); omitted means the tool's behavior. */
+  tuning?: WaiverTuning;
 }
 
 export type Bucket = "start_now" | "stash" | "ir_stash" | "drop" | "move_to_ir" | "bench_watch";
@@ -138,6 +140,7 @@ export async function simulate(season: Season, config: SimConfig): Promise<SimRe
       irSlots,
       limit: config.limit,
       week,
+      tuning: config.tuning,
     });
 
     for (const bucket of ["start_now", "stash", "ir_stash"] as const) {

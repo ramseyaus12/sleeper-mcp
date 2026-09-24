@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   lines.push("- No trending adds, no depth charts (injured starters are found by snap share only), and no historical search_rank.");
   lines.push(`- TE bonus check: of ${teBonus.length} week 5 TE rows with snaps, ${teBonus.filter((r) => typeof r.stats?.bonus_rec_te === "number").length} carry bonus_rec_te.`);
   lines.push("");
-  lines.push("Columns: gains are your suggested player's actual points minus the other player's, averaged. 'vs replaced' is the starter he would replace (for drop: the dropped player). 'vs baseline' is the highest week-N-projected free agent at the same position. '= baseline' counts suggestions that are the baseline player. 'wins 3w' is the share of positive 3-week gains.");
+  lines.push("Columns: gains are your suggested player's actual points minus the other player's, averaged. 'vs replaced' is the starter he would replace (for drop: the dropped player; for ir_stash: an empty IR slot, so 0). 'vs baseline' is the highest week-N-projected free agent at the same position (none for ir_stash). '= baseline' counts suggestions that are the baseline player. 'wins 3w' is the share of positive 3-week gains.");
 
   for (const longAbsence of absenceModes) {
     for (const rivals of rivalModes) {
@@ -100,6 +100,13 @@ async function main(): Promise<void> {
           return row ? `${fmt(row.vsReplaced["3w"])} (${row.n})` : "- (0)";
         };
         lines.push(`- Slot ${run.result.config.slot}: start_now ${cell("start_now")}, stash ${cell("stash")}, ir_stash ${cell("ir_stash")}, drop ${cell("drop")}, move_to_ir ${rows.find((r) => r.bucket === "move_to_ir")?.n ?? 0}, bench_watch ${rows.find((r) => r.bucket === "bench_watch")?.n ?? 0}${rivals ? `; rival claims ${run.result.rivalClaims}` : ""}`);
+      }
+      const irStash = graded.filter((g) => g.bucket === "ir_stash");
+      if (irStash.length) {
+        const played = irStash.map((g) => g.weeksPlayed ?? 0);
+        lines.push(
+          `- ir_stash (vs an empty IR slot): ${irStash.length} suggestions, mean points through week ${endWeek} ${(irStash.reduce((s, g) => s + g.points.ros, 0) / irStash.length).toFixed(1)}, mean weeks played after the suggestion ${(played.reduce((s, v) => s + v, 0) / played.length).toFixed(1)}, played at least once ${Math.round((played.filter((v) => v > 0).length / played.length) * 100)}%`,
+        );
       }
       const proxy = group[0]?.result.proxy ?? [];
       lines.push(`- Proxy designations per week (mean): Out ${(proxy.reduce((s, p) => s + p.out, 0) / (proxy.length || 1)).toFixed(0)}, IR ${(proxy.reduce((s, p) => s + p.ir, 0) / (proxy.length || 1)).toFixed(0)}`);
