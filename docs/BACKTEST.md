@@ -9,7 +9,7 @@ npx tsx scripts/backtest/fetch.ts   # once: 34 requests, cached under ~/.cache/s
 npx tsx scripts/backtest/run.ts     # no requests; writes reports/ in the same folder
 npx tsx scripts/backtest/run.ts --slots 1,5,10 --rivals off,on --long-absence off,on --draft-source week1 --week1-rank vor --end-week 17
 npx tsx scripts/backtest/proxy-check.ts --week 9 --count 15 --seed 9   # Out proxy sanity check
-npx tsx scripts/backtest/variants.ts                                   # stash default vs the earlier stash rule
+npx tsx scripts/backtest/variants.ts                                   # stash default (V6) vs V7 and the earlier stash rule
 ```
 
 ## How the simulation works
@@ -298,4 +298,54 @@ Per combination (stash per week; gain 3w / ROS vs baseline):
 | slot 1, rivals on, long absence on | 5.0; +6.3 / -6.4 | 10.0; -10.7 / -45.7 |
 | slot 5, rivals on, long absence on | 5.0; +10.0 / +15.8 | 10.0; -7.9 / -44.1 |
 | slot 10, rivals on, long absence on | 5.0; +3.0 / -3.7 | 10.0; -13.9 / -51.1 |
+
+## Stash variant V7
+
+The live smoke run on 2026-09-24 returned five backup QBs as stash picks for a team that starts one QB. V6 ranks by raw `proj_next3`, and QBs project the most points. The backtest's baseline is the best free agent at the same position, so it could not catch this. The backtest league also starts one QB (roster positions `QB, RB, RB, WR, WR, TE, FLEX, FLEX, K, DEF`), and 61% of V6's stash picks there were QBs.
+
+- V7: the same projection floor and limit (5) as V6, ranked by `proj_next3` minus the 3-week projection (weeks N to N+2) of the starter the pick would replace. That starter is the weakest eligible starter in the optimal lineup, the same rule as `startGain`. It runs through `stashSort: "gain_next3"` in `WaiverTuning`; the default is unchanged.
+
+"vs replaced" is that same starter's actual points, so it measures what V7 ranks by. "vs baseline" measures whether the pick was the best choice at his own position. Output of `npx tsx scripts/backtest/variants.ts`, run 2026-09-24 against the disk cache:
+
+Stash vs the baseline free agent (highest week-N-projected at the same position), all 12 combinations combined.
+'Beats current' counts combinations where the variant's mean gain over the baseline is higher than today's stash; a combination with no stash entries does not count as a win.
+
+| Variant | Rule | stash per week | = baseline | gain 3w | gain ROS | wins 3w | beats current 3w | beats current ROS | beats on both |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current | default (V6): projection floor only, rank by proj_next3, limit 5 | 5.0 | 13% | +2.4 | +8.3 | 48% | - | - | - |
+| V7 | projection floor only, rank by proj_next3 minus the replaced starter's 3-week projection, limit 5 | 5.0 | 7% | -1.8 | -8.8 | 45% | 4/12 | 0/12 | 0/12 |
+| signal | injury opportunity or rising/breakout required, rank by stashScore, limit 10 | 10.0 | 1% | -13.8 | -39.6 | 25% | 0/12 | 0/12 | 0/12 |
+
+Stash vs the starter each pick would replace and vs the baseline free agent, all 12 combinations combined, with the position mix of the picks:
+
+| Variant | vs replaced 3w | vs replaced ROS | wins 3w | vs baseline 3w | vs baseline ROS | wins 3w | positions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| current | -0.1 | -3.5 | 50% | +2.4 | +8.3 | 48% | QB 61%, WR 23%, RB 10%, TE 7% |
+| V7 | +11.5 | +23.2 | 81% | -1.8 | -8.8 | 45% | RB 39%, TE 32%, WR 16%, QB 12% |
+| signal | -13.0 | -32.7 | 24% | -13.8 | -39.6 | 25% | RB 41%, WR 33%, TE 21%, QB 5% |
+
+V7 beats the default (V6) in: vs replaced 3w 12/12, ROS 10/12; vs baseline 3w 4/12, ROS 0/12.
+
+Per combination, default (V6) and V7 (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):
+
+| Combination | V6 | V7 |
+| --- | --- | --- |
+| slot 1, rivals off, long absence off | -0.8 / +11.3; -0.1 / +17.5; QB 87%, RB 10%, WR 3% | +17.2 / +23.5; +5.3 / +3.5; TE 48%, RB 22%, QB 18%, WR 12% |
+| slot 5, rivals off, long absence off | -3.8 / -41.4; -4.2 / +7.7; QB 82%, WR 17%, RB 2% | +12.7 / +35.0; -9.8 / -1.8; RB 67%, TE 22%, QB 10%, WR 2% |
+| slot 10, rivals off, long absence off | +6.7 / +11.0; -2.2 / +11.3; QB 92%, RB 7%, TE 2% | +9.0 / +9.5; -5.4 / +0.1; WR 28%, RB 28%, QB 25%, TE 18% |
+| slot 1, rivals on, long absence off | +1.3 / +18.4; +7.0 / -1.5; QB 38%, WR 37%, RB 18%, TE 7% | +11.1 / +23.2; +3.1 / -15.6; TE 63%, WR 17%, RB 12%, QB 8% |
+| slot 5, rivals on, long absence off | -6.8 / -17.8; +9.1 / +16.0; QB 38%, WR 38%, TE 20%, RB 3% | +13.3 / +46.9; -6.6 / -27.9; RB 80%, TE 15%, QB 5% |
+| slot 10, rivals on, long absence off | +4.4 / +3.4; +4.4 / +2.7; QB 50%, WR 28%, RB 13%, TE 8% | +10.6 / +12.4; +6.0 / +0.9; WR 35%, TE 28%, RB 27%, QB 10% |
+| slot 1, rivals off, long absence on | -0.4 / +11.8; +0.6 / +19.0; QB 83%, RB 12%, WR 5% | +18.4 / +26.1; +5.5 / +5.4; TE 45%, RB 22%, QB 20%, WR 13% |
+| slot 5, rivals off, long absence on | -3.8 / -40.7; -4.2 / +8.4; QB 80%, WR 18%, RB 2% | +12.0 / +31.2; -10.3 / -5.0; RB 65%, TE 23%, QB 10%, WR 2% |
+| slot 10, rivals off, long absence on | +7.5 / +13.5; -1.1 / +12.9; QB 88%, RB 10%, TE 2% | +8.4 / +9.7; -5.7 / +1.6; RB 28%, QB 27%, WR 27%, TE 18% |
+| slot 1, rivals on, long absence on | +0.1 / +14.8; +6.3 / -6.4; WR 45%, RB 25%, QB 23%, TE 7% | +8.0 / +17.8; +1.9 / -23.1; TE 62%, WR 20%, RB 13%, QB 5% |
+| slot 5, rivals on, long absence on | -8.8 / -20.4; +10.0 / +15.8; WR 48%, QB 27%, TE 23%, RB 2% | +10.8 / +41.8; -8.9 / -34.0; RB 83%, TE 15%, QB 2% |
+| slot 10, rivals on, long absence on | +2.8 / -6.5; +3.0 / -3.7; QB 40%, WR 33%, RB 17%, TE 10% | +6.7 / +1.6; +3.1 / -9.8; WR 42%, TE 28%, RB 23%, QB 7% |
+
+**Reading it:**
+- Against the starter it would replace, V7 is far ahead of V6: +11.5 vs -0.1 over 3 weeks and +23.2 vs -3.5 rest of season, with 81% of 3-week gains positive (V6: 50%). It beats V6 in 12 of 12 combinations over 3 weeks and 10 of 12 rest of season.
+- Against the best free agent at the same position, V7 is behind V6: -1.8 vs +2.4 over 3 weeks and -8.8 vs +8.3 rest of season. It beats V6 in 4 of 12 combinations over 3 weeks and 0 of 12 rest of season. V7's picks match the baseline player less often (7% vs 13%).
+- The position mix moves from QB 61% (V6) to RB 39%, TE 32%, WR 16%, QB 12% (V7). Which position V7 favors depends on the draft slot: TE for slot 1, RB for slot 5, spread out for slot 10.
+- V7 ranks by a projected version of the "vs replaced" measure, so part of its lead there comes from choosing on the quantity being graded. Neither measure alone settles the choice: V6 picks the stronger player at a position the team may not need; V7 picks positions the team needs but not always the best player available there.
 

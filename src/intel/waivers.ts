@@ -35,8 +35,11 @@ export interface WaiverTuning {
   stashLabels?: readonly ("rising" | "breakout")[];
   /** With stashRequireSignal: played weeks a usage trend needs before its label qualifies (default 0). */
   stashMinPlayedWeeks?: number;
-  /** stash order: proj_next3 (default) or stashScore. */
-  stashSort?: "score" | "proj_next3";
+  /**
+   * stash order: proj_next3 (default), stashScore, or gain_next3: proj_next3 minus the 3-week projection
+   * of the starter the candidate would replace (the weakest eligible starter, as in startGain).
+   */
+  stashSort?: "score" | "proj_next3" | "gain_next3";
 }
 
 function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
@@ -153,6 +156,8 @@ export interface BucketOptions {
   limit: number;
   /** Target week, for the bye-week reason. */
   week: number;
+  /** 3-week projection of a player in the optimal lineup, for stashSort "gain_next3". */
+  starterNext3?: (playerId: string) => number;
   tuning?: WaiverTuning;
 }
 
@@ -277,7 +282,10 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
   if (tuning?.stashSort === "score") stash.sort((a, b) => stashScore(b) - stashScore(a));
-  else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
+  else if (tuning?.stashSort === "gain_next3") {
+    const replacedNext3 = (e: WaiverEntry) => (e.replaces && e.replaces.player_id !== "0" ? (options.starterNext3?.(e.replaces.player_id) ?? 0) : 0);
+    stash.sort((a, b) => b.proj_next3 - replacedNext3(b) - (a.proj_next3 - replacedNext3(a)));
+  } else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
   irStash.sort((a, b) => (a.search_rank ?? Number.MAX_SAFE_INTEGER) - (b.search_rank ?? Number.MAX_SAFE_INTEGER));
   return {
     start_now: startNow.slice(0, limit),
@@ -496,6 +504,7 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     nameOf,
     limit: input.limit,
     week: input.week,
+    starterNext3: (id) => projNext3({ proj: proj(id), next_proj: projAhead(id, 1), next2_proj: projAhead(id, 2) }),
     tuning: input.tuning,
   });
 

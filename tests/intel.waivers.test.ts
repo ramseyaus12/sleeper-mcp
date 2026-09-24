@@ -217,6 +217,15 @@ describe("waiverBuckets", () => {
     expect(waiverBuckets(pool, options({ limit: 3 })).stash.map((e) => e.proj_next3)).toEqual([20, 14, 12]);
   });
 
+  it("with stashSort gain_next3, ranks stash by 3-week edge over the starter each would replace", () => {
+    const qb = candidate("qb", ["QB"], { proj: 19, next_proj: 19, next2_proj: 19 });
+    const wr = candidate("wr", ["WR"], { proj: 9, next_proj: 9, next2_proj: 9 });
+    const next3: Record<string, number> = { qb1: 60, fx: 20 };
+    expect(ids(waiverBuckets([qb, wr], options()).stash)).toEqual(["qb", "wr"]);
+    const edge = waiverBuckets([qb, wr], options({ tuning: { stashSort: "gain_next3" }, starterNext3: (id) => next3[id] ?? 0 }));
+    expect(ids(edge.stash)).toEqual(["wr", "qb"]);
+  });
+
   it("still starts a one-week opening that beats a starter", () => {
     const { start_now, stash } = waiverBuckets([candidate("out", ["TE"], { proj: 12, opportunity: kelceOut })], options());
     expect(ids(start_now)).toEqual(["out"]);
