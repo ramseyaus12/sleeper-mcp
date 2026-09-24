@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectedClient } from "./helpers.js";
-import { LEAGUE_ID, PREV_LEAGUE_ID, DRAFT_ID } from "./fixtures.js";
+import { LEAGUE_ID, PREV_LEAGUE_ID, DRAFT_ID, kcUsageRoutes, p as fixturePlayer, state } from "./fixtures.js";
 
 type Connected = Awaited<ReturnType<typeof connectedClient>>;
 let c: Connected;
@@ -31,9 +31,11 @@ describe("server surface", () => {
         "get_nfl_state",
         "get_player",
         "get_player_stats",
+        "get_player_trends",
         "get_playoff_bracket",
         "get_projections",
         "get_roster",
+        "get_team_usage",
         "get_traded_picks",
         "get_transactions",
         "get_trending_players",
@@ -412,5 +414,129 @@ describe("error handling", () => {
     } finally {
       await broken.close();
     }
+  });
+});
+
+describe("usage tools", () => {
+  const ISO = /^\d{4}-\d{2}-\d{2}T/;
+
+  async function withKc<T>(fn: (k: Connected) => Promise<T>, extra: Parameters<typeof kcUsageRoutes>[0] = {}, routes: Record<string, unknown> = {}): Promise<T> {
+    const k = await connectedClient({ ...kcUsageRoutes(extra), ...routes });
+    try {
+      return await fn(k);
+    } finally {
+      await k.close();
+    }
+  }
+
+  it("get_player_trends returns weekly shares, missed weeks, a trend and Sleeper status", async () => {
+    await withKc(async (k) => {
+      const { data } = await k.call("get_player_trends", { player_ids: ["5850", "12002"] });
+      expect(data).toMatchObject({ season: "2026", weeks: [1, 2, 3, 4] });
+      const [kelce, backup] = data!.players as Record<string, any>[];
+      expect(kelce).toMatchObject({ id: "5850", name: "Travis Kelce", pos: "TE", team: "KC" });
+      expect(kelce!.status).toMatchObject({ designation: "Out", source: "sleeper" });
+      expect(kelce!.status.as_of).toMatch(ISO);
+      expect(kelce!.weeks).toEqual([
+        { week: 1, team: "KC", snap_share: 75, target_share: 25, carry_share: 0, rz_share: 25, air_yd_share: 26.7 },
+        { week: 2, team: "KC", snap_share: 75, target_share: 25, carry_share: 0, rz_share: 25, air_yd_share: 26.7 },
+        { week: 3, missed: true },
+        { week: 4, missed: true, team: "KC" },
+      ]);
+      expect(kelce!.trend).toMatchObject({ label: "steady", played_weeks: 2, snap_share: { recent: 75, baseline: 75, delta: 0, label: "steady" } });
+      expect(backup!.trend).toMatchObject({
+        label: "breakout",
+        played_weeks: 4,
+        snap_share: { recent: 80, baseline: 20, delta: 60, label: "rising" },
+        target_share: { recent: 27.5, baseline: 5, delta: 22.5, label: "rising" },
+      });
+    });
+  });
+
+  it("get_player_trends resolves names and reports the ones it cannot find", async () => {
+    await withKc(async (k) => {
+      const { data } = await k.call("get_player_trends", { names: ["Travis Kelce", "Nobody Atall"] });
+      expect((data!.players as { id: string }[]).map((p) => p.id)).toEqual(["5850"]);
+      expect(data!.unresolved).toEqual(["Nobody Atall"]);
+    });
+  });
+
+  it("get_player_trends prefers the QB/RB/WR/TE when a name also matches a defensive player", async () => {
+    const twins = {
+      "12010": fixturePlayer("12010", "Test", "Twin", "LB", "DEN", { search_rank: 5 }),
+      "12011": fixturePlayer("12011", "Test", "Twin", "WR", "KC", { search_rank: 500 }),
+    };
+    await withKc(async (k) => {
+      const { data } = await k.call("get_player_trends", { names: ["Test Twin"] });
+      expect(data!.players).toEqual([expect.objectContaining({ id: "12011", pos: "WR", trend: { label: "insufficient", played_weeks: 0 } })]);
+    }, twins);
+  });
+
+  it("get_player_trends covers a whole roster and lists positions it skips", async () => {
+    await withKc(async (k) => {
+      const { data } = await k.call("get_player_trends", { league_id: LEAGUE_ID, username: "alice" });
+      expect((data!.players as unknown[]).length).toBe(9);
+      expect((data!.skipped_non_usage_positions as { id: string }[]).map((p) => p.id)).toEqual(["4195", "DET"]);
+    });
+  });
+
+  it("get_player_trends needs players or a league, and completed weeks", async () => {
+    const none = await c.call("get_player_trends", {});
+    expect(none.result.isError).toBe(true);
+    expect(none.text).toMatch(/player_ids, names, or league_id/);
+    await withKc(
+      async (k) => {
+        const early = await k.call("get_player_trends", { player_ids: ["4046"] });
+        expect(early.result.isError).toBe(true);
+        expect(early.text).toBe("No completed regular-season weeks yet in 2026.");
+      },
+      {},
+      { "/state/nfl": { ...state, week: 1 } },
+    );
+  });
+
+  it("get_team_usage splits an offense, vacated volume and who absorbs it", async () => {
+    await withKc(async (k) => {
+      const { data } = await k.call("get_team_usage", { team: "kc" });
+      expect(data).toMatchObject({ team: "KC", season: "2026", weeks: [1, 2, 3, 4], position: "all", status_source: "sleeper" });
+      expect(data!.status_as_of).toMatch(ISO);
+      expect((data!.players as { id: string }[]).map((p) => p.id)).toEqual(["4046", "12003", "12001", "12002", "5850"]);
+      expect(data!.vacated).toEqual([
+        {
+          id: "5850",
+          name: "Travis Kelce",
+          pos: "TE",
+          team: "KC",
+          inj: "Out",
+          status: { designation: "Out", source: "sleeper", as_of: data!.status_as_of },
+          starter_by: ["depth_chart", "snap_share"],
+          played_weeks: 2,
+          vacated: { target_share: 25, carry_share: 0, rz_share: 25 },
+          beneficiaries: [
+            { id: "12002", name: "Kc Backup", pos: "TE", team: "KC", via: ["next_on_depth_chart", "share_rose"], target_share_change: 22.5, carry_share_change: 0 },
+          ],
+        },
+      ]);
+    });
+  });
+
+  it("get_team_usage filters by position", async () => {
+    await withKc(async (k) => {
+      const te = await k.call("get_team_usage", { team: "KC", position: "TE" });
+      expect((te.data!.players as { id: string }[]).map((p) => p.id)).toEqual(["12002", "5850"]);
+      expect(te.data!.vacated as unknown[]).toHaveLength(1);
+      const wr = await k.call("get_team_usage", { team: "KC", position: "WR" });
+      expect((wr.data!.players as { id: string }[]).map((p) => p.id)).toEqual(["12001"]);
+      expect(wr.data!.vacated).toEqual([]);
+    });
+  });
+
+  it("get_team_usage rejects unknown teams and non-offensive positions", async () => {
+    const team = await c.call("get_team_usage", { team: "XYZ" });
+    expect(team.result.isError).toBe(true);
+    expect(team.text).toMatch(/No NFL team "XYZ"/);
+    const pos = await c.call("get_team_usage", { team: "KC", position: "K" });
+    expect(pos.result.isError).toBe(true);
+    expect(pos.text).toBe("position must be QB, RB, WR or TE.");
   });
 });

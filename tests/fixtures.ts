@@ -64,7 +64,7 @@ export const players: PlayerMap = {
   "11004": p("11004", "Retired", "Ron", "WR", null, { search_rank: 9999999, status: "Inactive", active: false }),
 };
 
-function p(id: string, first: string, last: string, pos: string, team: string | null, extra: Partial<PlayerMap[string]> = {}): PlayerMap[string] {
+export function p(id: string, first: string, last: string, pos: string, team: string | null, extra: Partial<PlayerMap[string]> = {}): PlayerMap[string] {
   return {
     player_id: id,
     first_name: first,
@@ -425,6 +425,53 @@ export const espnRosterInd = {
     { position: "defense", items: [{ id: "4000002", fullName: "Test Linebacker", position: { abbreviation: "LB" } }] },
   ],
 };
+
+export function statRowsUrl(week: number): string {
+  return `https://api.sleeper.com/stats/nfl/2026/${week}?season_type=regular&position[]=QB&position[]=RB&position[]=TE&position[]=WR`;
+}
+
+/** KC players for usage tests: Kelce (Out) is TE1; the others are healthy. */
+export const kcUsagePlayers: PlayerMap = {
+  "5850": { ...players["5850"]!, depth_chart_position: "TE", depth_chart_order: 1 },
+  "12001": p("12001", "Kc", "Receiver", "WR", "KC", { search_rank: 50, depth_chart_position: "LWR", depth_chart_order: 1 }),
+  "12002": p("12002", "Kc", "Backup", "TE", "KC", { search_rank: 400, depth_chart_position: "TE", depth_chart_order: 2 }),
+  "12003": p("12003", "Kc", "Runner", "RB", "KC", { search_rank: 60, depth_chart_position: "RB", depth_chart_order: 1 }),
+};
+
+function kcRow(id: string, pos: string, stats: StatRow["stats"]): StatRow {
+  return { player_id: id, team: "KC", opponent: "DEN", stats, player: { position: pos, fantasy_positions: [pos] } };
+}
+
+/**
+ * KC weeks 1-4. Kelce plays weeks 1-2 (75% snaps, 25% target share), has no row in week 3 and a row
+ * with no snaps in week 4. His backup TE's target share goes from 5% to 27.5% once he is out. Every
+ * week has 40 targets, 20 carries and 8 red zone looks.
+ */
+export const kcUsageRows: Record<number, StatRow[]> = Object.fromEntries(
+  [1, 2, 3, 4].map((week) => {
+    const withKelce = week <= 2;
+    const rows: StatRow[] = [
+      kcRow("4046", "QB", { off_snp: 60, tm_off_snp: 60, rush_att: 4, gms_active: 1 }),
+      kcRow("12003", "RB", { off_snp: 42, tm_off_snp: 60, rush_att: 16, rush_rz_att: 4, rec_tgt: 8, gms_active: 1 }),
+      withKelce
+        ? kcRow("12001", "WR", { off_snp: 54, tm_off_snp: 60, rec_tgt: 20, rec_rz_tgt: 2, rec_air_yd: 200, gms_active: 1 })
+        : kcRow("12001", "WR", { off_snp: 54, tm_off_snp: 60, rec_tgt: 21, rec_rz_tgt: 2, rec_air_yd: 200, gms_active: 1 }),
+      withKelce
+        ? kcRow("12002", "TE", { off_snp: 12, tm_off_snp: 60, rec_tgt: 2, rec_air_yd: 20, gms_active: 1 })
+        : kcRow("12002", "TE", { off_snp: 48, tm_off_snp: 60, rec_tgt: 11, rec_rz_tgt: 2, rec_air_yd: 100, gms_active: 1 }),
+    ];
+    if (withKelce) rows.push(kcRow("5850", "TE", { off_snp: 45, tm_off_snp: 60, rec_tgt: 10, rec_rz_tgt: 2, rec_air_yd: 80, gms_active: 1 }));
+    if (week === 4) rows.push(kcRow("5850", "TE", {}));
+    return [week, rows];
+  }),
+);
+
+/** Route overrides for connectedClient: the KC player map additions and stat rows for weeks 1-4. */
+export function kcUsageRoutes(extraPlayers: PlayerMap = {}): Record<string, unknown> {
+  const out: Record<string, unknown> = { "/players/nfl": { ...players, ...kcUsagePlayers, ...extraPlayers } };
+  for (const [week, rows] of Object.entries(kcUsageRows)) out[statRowsUrl(Number(week))] = rows;
+  return out;
+}
 
 /** Route table: path (without base) -> body. Query strings are matched exactly where present. */
 export function routes(): Record<string, unknown> {

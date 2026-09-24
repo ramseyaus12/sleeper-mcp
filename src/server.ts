@@ -9,6 +9,7 @@ import { registerDraftTools } from "./tools/drafts.js";
 import { registerPlayerTools } from "./tools/players.js";
 import { registerStatTools } from "./tools/stats.js";
 import { registerAccountTools } from "./tools/account.js";
+import { registerIntelTools } from "./tools/intel.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { name: string; version: string };
@@ -52,6 +53,7 @@ export function createServer(options: CreateServerOptions = {}): { server: McpSe
   registerDraftTools(server, ctx);
   registerPlayerTools(server, ctx);
   registerStatTools(server, ctx);
+  registerIntelTools(server, ctx);
   registerAccountTools(server, ctx);
   registerPrompts(server);
   registerResources(server, ctx);
