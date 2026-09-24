@@ -152,11 +152,12 @@ export function playerWeeks(index: UsageIndex, playerId: string, team?: string):
 /**
  * Trend over played weeks only. With 3 or more: recent = mean of the last 2, baseline = mean of the
  * earlier ones. With exactly 2: the last against the one before. With fewer: "insufficient".
+ * `positions` (the player's fantasy positions) picks the metrics the overall label weighs.
  */
-export function trend(weeks: readonly PlayerWeek[]): Trend {
+export function trend(weeks: readonly PlayerWeek[], positions: readonly string[] = []): Trend {
   const played = weeks.filter((w): w is PlayedWeek => w.played);
   const metrics = Object.fromEntries(SHARE_KEYS.map((key) => [key, metricTrend(key, played.map((w) => w[key]))])) as Record<ShareKey, MetricTrend>;
-  return { played_weeks: played.length, label: overallLabel(metrics, played.length), metrics };
+  return { played_weeks: played.length, label: overallLabel(metrics, played.length, positions), metrics };
 }
 
 function metricTrend(key: ShareKey, values: readonly (number | null)[]): MetricTrend {
@@ -179,15 +180,31 @@ export function labelFor(key: ShareKey, delta: number): TrendLabel | null {
 }
 
 /**
- * "breakout" when snaps and targets or carries are rising; otherwise the rising or falling label whose
- * delta is largest relative to its threshold; "steady" when none moved.
+ * Metrics the overall label weighs for a player's fantasy positions, and the ones that make a breakout
+ * when they rise together with snaps. RB (fullbacks included): snaps, targets, carries. WR and TE:
+ * snaps and targets. QB: snaps only, never a breakout. RB rules win for multi-position players, then
+ * WR/TE, then QB; players with no QB/RB/WR/TE position get the RB rules.
  */
-export function overallLabel(metrics: Record<ShareKey, MetricTrend>, playedWeeks: number): OverallLabel {
+export function overallMetrics(positions: readonly string[]): { considered: ShareKey[]; breakout: ShareKey[] } {
+  const has = (position: string) => positions.includes(position);
+  const known = positions.some((p) => (USAGE_POSITIONS as readonly string[]).includes(p) || p === "FB");
+  if (has("RB") || has("FB") || !known) return { considered: ["snap_share", "target_share", "carry_share"], breakout: ["target_share", "carry_share"] };
+  if (has("WR") || has("TE")) return { considered: ["snap_share", "target_share"], breakout: ["target_share"] };
+  return { considered: ["snap_share"], breakout: [] };
+}
+
+/**
+ * "breakout" when snaps rise together with one of the position's breakout metrics; otherwise, among the
+ * metrics the position weighs, the rising or falling label whose delta is largest relative to its
+ * threshold; "steady" when none moved.
+ */
+export function overallLabel(metrics: Record<ShareKey, MetricTrend>, playedWeeks: number, positions: readonly string[] = []): OverallLabel {
   if (playedWeeks < 2) return "insufficient";
+  const { considered, breakout } = overallMetrics(positions);
   const rising = (key: ShareKey) => metrics[key].label === "rising";
-  if (rising("snap_share") && (rising("target_share") || rising("carry_share"))) return "breakout";
+  if (rising("snap_share") && breakout.some(rising)) return "breakout";
   let best: { label: TrendLabel; strength: number } | null = null;
-  for (const key of SHARE_KEYS) {
+  for (const key of considered) {
     const threshold = LABELED[key];
     const { label, delta } = metrics[key];
     if (threshold === undefined || label === null || label === "steady" || delta === null) continue;

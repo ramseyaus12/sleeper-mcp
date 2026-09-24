@@ -66,7 +66,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
               ...ctx.players.ref(id),
               status: { designation: ctx.players.raw(id)?.injury_status ?? null, source: "sleeper", as_of: asOf },
               weeks: history.map(formatWeek),
-              trend: formatTrend(trend(history)),
+              trend: formatTrend(trend(history, usagePositions(window.index, id, ctx.players.raw(id)))),
             };
           }),
           ...(unresolved.length ? { unresolved } : {}),
@@ -107,7 +107,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           .filter(inPosition)
           .map((id) => ({ id, history: playerWeeks(window.index, id, team) }))
           .sort((a, b) => positionRank(a.id) - positionRank(b.id) || latestSnapShare(b.history) - latestSnapShare(a.history))
-          .map(({ id, history }) => ({ ...ctx.players.ref(id), weeks: history.map(formatWeek), trend: formatTrend(trend(history)) }));
+          .map(({ id, history }) => ({ ...ctx.players.ref(id), weeks: history.map(formatWeek), trend: formatTrend(trend(history, positionsOf(id))) }));
 
         const vacated = vacatedVolume(window.index, team, teamPlayers)
           .filter((v) => inPosition(v.player_id))

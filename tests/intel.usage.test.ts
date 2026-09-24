@@ -190,6 +190,31 @@ describe("labels", () => {
     expect(overallLabel(metrics({ snap_share: 16, target_share: -6 }), 4)).toBe("rising");
   });
 
+  it("weighs only snaps for a QB, so a lost carry share does not make him falling", () => {
+    const lock = trend(
+      [played(1, { snap_share: 90, carry_share: 9.1, rz_share: 16.7 }), played(2, { snap_share: 100, carry_share: 0, rz_share: 0 })],
+      ["QB"],
+    );
+    expect(lock.metrics.carry_share.label).toBe("falling");
+    expect(lock.label).toBe("rising");
+    expect(overallLabel(metrics({ snap_share: 10, carry_share: 10, target_share: 10 }), 4, ["QB"])).toBe("rising");
+    expect(overallLabel(metrics({ snap_share: 2, carry_share: -20 }), 4, ["QB"])).toBe("steady");
+  });
+
+  it("ignores carry share for a WR or TE", () => {
+    const wr = metrics({ snap_share: 2, target_share: 1, carry_share: 10 });
+    expect(wr.carry_share.label).toBe("rising");
+    expect(overallLabel(wr, 4, ["WR"])).toBe("steady");
+    expect(overallLabel(metrics({ snap_share: 10, carry_share: 10 }), 4, ["TE"])).toBe("rising");
+    expect(overallLabel(metrics({ snap_share: 10, target_share: 6 }), 4, ["WR"])).toBe("breakout");
+  });
+
+  it("gives an RB a breakout on snaps and carries, fullbacks included", () => {
+    expect(overallLabel(metrics({ snap_share: 10, carry_share: 8 }), 4, ["RB"])).toBe("breakout");
+    expect(overallLabel(metrics({ snap_share: 10, carry_share: 8 }), 4, ["FB"])).toBe("breakout");
+    expect(overallLabel(metrics({ snap_share: 10, target_share: 6 }), 4, ["RB", "WR"])).toBe("breakout");
+  });
+
   it("is steady when nothing moved and insufficient under 2 played weeks", () => {
     expect(overallLabel(metrics({ snap_share: 3, target_share: -2, rz_share: 40 }), 4)).toBe("steady");
     expect(overallLabel(metrics({ snap_share: 20 }), 1)).toBe("insufficient");
