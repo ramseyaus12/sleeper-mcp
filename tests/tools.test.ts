@@ -749,6 +749,26 @@ describe("get_player_news", () => {
     expect((data!.no_espn_id as { id: string }[]).map((p) => p.id)).toEqual(["4046"]);
   });
 
+  it("separates multi-player articles from the player's own updates", async () => {
+    const roundup = {
+      type: "Story",
+      headline: "Fantasy football buzz: Week 6",
+      description: "<p>Roundup</p>",
+      story: "<p><photo1></p><p>Many players.</p>",
+      published: "2026-10-08T18:01:27Z",
+      playerId: 4242335,
+    };
+    const k = await connectedClient({ [ESPN_NEWS_TAYLOR_URL]: { feed: [roundup, ...espnNewsTaylor.feed] } });
+    try {
+      const { data } = await k.call("get_player_news", { names: ["Jonathan Taylor"] });
+      const [taylor] = data!.players as { news: { headline: string }[]; mentioned_in: unknown[] }[];
+      expect(taylor!.news.map((n) => n.headline)).toEqual(["Taylor limited Wednesday"]);
+      expect(taylor!.mentioned_in).toEqual([{ headline: "Fantasy football buzz: Week 6", published: "2026-10-08T18:01:27Z", source: "espn" }]);
+    } finally {
+      await k.close();
+    }
+  });
+
   it("drops news older than the requested window", async () => {
     const { data } = await c.call("get_player_news", { names: ["Jonathan Taylor"], hours: 1 });
     expect((data!.players as { news: unknown[] }[])[0]!.news).toEqual([]);

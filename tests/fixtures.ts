@@ -388,6 +388,7 @@ export const espnInjuries = {
 export const espnNewsTaylor = {
   feed: [
     {
+      type: "Rotowire",
       headline: "Taylor limited Wednesday",
       description: "Jonathan Taylor was limited at practice.",
       story: "Taylor (ankle) was limited at practice Wednesday.",

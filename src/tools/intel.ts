@@ -19,6 +19,7 @@ import {
   type Trend,
   type UsageIndex,
 } from "../intel/usage.js";
+import { splitNews } from "../intel/news.js";
 import { espnDesignation, espnPosition, indexInjuries, mergeStatus, type InjuryIndex, type PlayerStatus } from "../intel/status.js";
 import { guard, positionSchema, teamSelectorShape } from "./shared.js";
 
@@ -213,7 +214,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
     {
       title: "Player news",
       description:
-        "Latest ESPN fantasy news for chosen players or a whole roster, from the last N hours (default 72): headline, description, a shortened story and published time, each with source and as_of. Players ESPN cannot be linked to are listed under no_espn_id.",
+        "Latest ESPN fantasy news for chosen players or a whole roster, from the last N hours (default 72). news: short updates about that player alone, with headline, description, a shortened story, published, source and as_of. mentioned_in: up to 3 recent articles or videos that mention the player among others (headline, published and source). Players ESPN cannot be linked to are listed under no_espn_id.",
       inputSchema: {
         player_ids: z.array(z.string().trim().min(1)).max(30).optional().describe("Sleeper player_ids."),
         names: z.array(z.string().trim().min(1)).max(30).optional().describe("Player names when you do not have ids; the best QB/RB/WR/TE match per name is used."),
@@ -243,20 +244,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         const players = await Promise.all(
           linked.map(async ({ id, espnId }) => {
             const feed = await ctx.espn.getPlayerNews(espnId);
-            const news = feed
-              .filter((item) => {
-                const published = Date.parse(item.published ?? "");
-                return Number.isFinite(published) && published >= since;
-              })
-              .map((item) => ({
-                headline: item.headline ?? null,
-                description: item.description ?? null,
-                story: shorten(item.story ?? null, STORY_CHARS),
-                published: item.published ?? null,
-                source: "espn",
-                as_of: item.published ?? null,
-              }));
-            return { ...ctx.players.ref(id), espn_id: espnId, news };
+            return { ...ctx.players.ref(id), espn_id: espnId, ...splitNews(feed, { since, storyChars: STORY_CHARS, maxMentions: MAX_MENTIONS }) };
           }),
         );
         return {
@@ -270,6 +258,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
 }
 
 const STORY_CHARS = 400;
+const MAX_MENTIONS = 3;
 
 interface StatusLookup {
   statusOf: (playerId: string) => PlayerStatus;
@@ -304,14 +293,6 @@ async function rosterPlayerIds(ctx: ServerContext, leagueId: string, selector: T
 
 function byTeamThenName(a: { team: string | null; name: string }, b: { team: string | null; name: string }): number {
   return (a.team ?? "").localeCompare(b.team ?? "") || a.name.localeCompare(b.name);
-}
-
-/** Cuts text to about `max` characters at a word boundary, marking the cut with an ellipsis. */
-function shorten(text: string | null, max: number): string | null {
-  if (!text || text.length <= max) return text;
-  const cut = text.slice(0, max);
-  const space = cut.lastIndexOf(" ");
-  return `${(space > max - 80 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 /** Player ids from explicit ids and names, or else from a league roster. */

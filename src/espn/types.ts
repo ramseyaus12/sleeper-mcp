@@ -42,6 +42,8 @@ export interface EspnInjuryTeam {
 }
 
 export interface EspnNewsItem {
+  /** "Rotowire" for short single-player updates, "Story" for articles, "Media" for videos. */
+  type?: string;
   headline?: string;
   description?: string;
   story?: string;
