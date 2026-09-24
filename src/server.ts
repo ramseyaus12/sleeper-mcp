@@ -36,7 +36,7 @@ Fantasy intel (usage from Sleeper stat rows, injuries and news from ESPN):
 - get_injury_report: current designations (ESPN merged with Sleeper) by NFL team, position or league roster.
 - get_player_news: ESPN updates for chosen players or a roster (default last 72 hours).
 - get_player_trends: a player's snap, target, carry, red zone and air yards share by week, with a trend label. get_team_usage: how one offense splits volume and who absorbs an injured starter's share.
-- How far to trust waiver buckets (2025 backtest, docs/BACKTEST.md): start_now pickups beat the starter they replace (about +15 pts over 3 weeks) but only tie the top-projected free agent at the position; stash roughly ties or slightly beats that free agent; drop suggestions are rare and held up; ir_stash adds points in an otherwise empty IR slot. The backtest's injury status was a snap-based stand-in, so injury-driven advice is the least tested.`;
+- How far to trust waiver buckets (2025 backtest, docs/BACKTEST.md): start_now pickups beat the starter they replace (+10 to +15 pts over 3 weeks, depending on whether other managers claim players) but only tie the top-projected free agent at the position; stash roughly ties or slightly beats that free agent; drop suggestions are rare and held up; ir_stash adds points in an otherwise empty IR slot. The backtest's injury status was a snap-based stand-in, so injury-driven advice is the least tested.`;
 
 export interface CreateServerOptions extends ContextOptions {
   /** Kick off the player-map download in the background as soon as the server is created (default true). */
