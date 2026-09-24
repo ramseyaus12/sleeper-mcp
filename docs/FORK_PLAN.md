@@ -138,8 +138,8 @@ New and changed files:
 src/
   sleeper/client.ts      CHANGE  allow absolute URLs in rawGet, add getStatRows / getProjectionRows
   sleeper/types.ts       CHANGE  add StatRow type (api.sleeper.com row shape)
-  espn/client.ts         NEW     EspnClient: getInjuries(), getPlayerNews(espnId)
-  espn/types.ts          NEW     EspnInjuryTeam, EspnInjury, EspnNewsItem
+  espn/client.ts         NEW     EspnClient: getInjuries(), getPlayerNews(espnId), getTeams(), getRoster(teamId)
+  espn/types.ts          NEW     EspnInjuryTeam, EspnInjury, EspnNewsItem, EspnTeam, EspnRosterAthlete
   intel/ids.ts           NEW     Sleeper <-> ESPN id map (espn_id, then name+team fallback)
   intel/usage.ts         NEW     pure functions: weekly shares, trends, team usage, vacated volume
   intel/status.ts        NEW     merge ESPN injury + Sleeper status into one PlayerStatus

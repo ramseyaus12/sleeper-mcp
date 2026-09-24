@@ -12,6 +12,7 @@ import type {
   SleeperUser,
   Sport,
   StatMap,
+  StatRow,
   TradedPick,
   Transaction,
   TrendingPlayer,
@@ -19,6 +20,7 @@ import type {
 
 export const SLEEPER_API_BASE = "https://api.sleeper.app/v1";
 export const SLEEPER_CDN_BASE = "https://sleepercdn.com";
+export const SLEEPER_COM_BASE = "https://api.sleeper.com";
 
 export class SleeperApiError extends Error {
   constructor(
@@ -70,6 +72,8 @@ export const TTL = {
   trending: 5 * 60_000,
   stats: 5 * 60_000,
   projections: 30 * 60_000,
+  rowsCompletedWeek: 12 * 60 * 60_000,
+  rowsCurrentWeek: 5 * 60_000,
 } as const;
 
 interface GetOptions {
@@ -135,7 +139,7 @@ export class SleeperClient {
   }
 
   private async rawGet(path: string): Promise<{ status: number; body: unknown }> {
-    const url = `${this.baseUrl}${path}`;
+    const url = path.startsWith("https://") ? path : `${this.baseUrl}${path}`;
     let attempt = 0;
     for (;;) {
       await this.throttle();
@@ -313,6 +317,42 @@ export class SleeperClient {
     const path =
       week === undefined ? `/projections/${sport}/${seasonType}/${enc(season)}` : `/projections/${sport}/${seasonType}/${enc(season)}/${week}`;
     return (await this.get<StatMap>(path, { ttlMs: TTL.projections, nullable: true })) ?? {};
+  }
+
+  /** Weekly stat rows from api.sleeper.com, one per player, each carrying the team and opponent for that week. */
+  getStatRows(season: string, week: number, positions: string[]): Promise<StatRow[]> {
+    return this.getRows("stats", season, week, positions);
+  }
+
+  /** Weekly projection rows from api.sleeper.com. Rows for players without a game have no team and zero points. */
+  getProjectionRows(season: string, week: number, positions: string[]): Promise<StatRow[]> {
+    return this.getRows("projections", season, week, positions);
+  }
+
+  /**
+   * One request for all `positions`, sent as repeated `position[]` params. The filter matches on
+   * `fantasy_positions`, so an RB request also returns fullbacks. Completed weeks cache for 12 hours,
+   * the current and future weeks for 5 minutes.
+   */
+  private async getRows(kind: "stats" | "projections", season: string, week: number, positions: string[]): Promise<StatRow[]> {
+    const wanted = [...new Set(positions.map((p) => p.trim().toUpperCase()).filter(Boolean))].sort();
+    // Brackets stay unencoded: that is the form the live API was checked with (docs/DATA_NOTES.md).
+    const query = ["season_type=regular", ...wanted.map((p) => `position[]=${enc(p)}`)].join("&");
+    const url = `${SLEEPER_COM_BASE}/${kind}/nfl/${enc(season)}/${week}?${query}`;
+    const ttlMs = (await this.isCompletedWeek(season, week)) ? TTL.rowsCompletedWeek : TTL.rowsCurrentWeek;
+    const body = await this.get<unknown>(url, { ttlMs, nullable: true });
+    return Array.isArray(body) ? (body as StatRow[]) : [];
+  }
+
+  /** True when the regular-season `week` of `season` is over, according to Sleeper's NFL state. */
+  private async isCompletedWeek(season: string, week: number): Promise<boolean> {
+    const state = await this.getNflState("nfl");
+    const requested = Number(season);
+    const current = Number(state.season);
+    if (requested < current) return true;
+    if (requested > current) return false;
+    if (state.season_type === "post" || state.season_type === "off") return true;
+    return state.season_type !== "pre" && week < state.week;
   }
 }
 
