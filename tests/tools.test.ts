@@ -533,8 +533,8 @@ describe("usage tools", () => {
   it("get_team_usage splits an offense, vacated volume and who absorbs it", async () => {
     await withKc(async (k) => {
       const { data } = await k.call("get_team_usage", { team: "kc" });
-      expect(data).toMatchObject({ team: "KC", season: "2026", weeks: [1, 2, 3, 4], position: "all", status_source: "sleeper" });
-      expect(data!.status_as_of).toMatch(ISO);
+      expect(data).toMatchObject({ team: "KC", season: "2026", weeks: [1, 2, 3, 4], position: "all" });
+      expect(data).not.toHaveProperty("status_source");
       expect((data!.players as { id: string }[]).map((p) => p.id)).toEqual(["4046", "12003", "12001", "12002", "5850"]);
       expect(data!.vacated).toEqual([
         {
@@ -543,7 +543,7 @@ describe("usage tools", () => {
           pos: "TE",
           team: "KC",
           inj: "Out",
-          status: { designation: "Out", body_part: null, note: null, practice: null, source: "sleeper", as_of: data!.status_as_of },
+          status: { designation: "Out", body_part: null, note: null, practice: null, source: "sleeper", as_of: expect.stringMatching(ISO) },
           starter_by: ["depth_chart", "snap_share"],
           played_weeks: 2,
           vacated: { target_share: 25, carry_share: 0, rz_share: 25 },
@@ -890,12 +890,53 @@ describe("get_waiver_targets", () => {
     expect(backup!.reasons[0]).toBe("No game in week 5; projects 7.0 pts in week 6");
   });
 
-  it("suggests moving an IR bench player to the open IR slot instead of dropping him", async () => {
+  it("suggests moving an IR bench player to the open IR slot instead of dropping him, and then offers no ir_stash", async () => {
+    // LaPorta on IR projects 0, so the optimal lineup does not start him. Alice has one open IR slot.
     const laportaIr = { ...fixturePlayers["9509"]!, injury_status: "IR" };
-    const { data } = await waivers({ "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "9509": laportaIr } });
+    const { data } = await waivers({
+      "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "9509": laportaIr },
+      [PROJ_WEEK5]: { ...projectionsWeek5, "9509": { pts_ppr: 0 } },
+    });
+    expect(data!.ir_slots_open).toBe(1);
     expect(data!.drop_candidates).toEqual([
       expect.objectContaining({ id: "9509", action: "move_to_ir", reasons: ["On IR: move him to your open IR slot instead of dropping him"] }),
     ]);
+    // Injured Ian (Sleeper IR) would take the slot otherwise; the IR move uses it first.
+    expect(data!.ir_stash).toEqual([]);
+  });
+
+  it("takes IR eligibility from Sleeper, not ESPN", async () => {
+    const espnLaporta = (type: string) => ({
+      [ESPN_TEAMS_URL]: { sports: [{ leagues: [{ teams: [{ team: { id: "8", abbreviation: "DET" } }] }] }] },
+      "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/8/roster": {
+        athletes: [{ position: "offense", items: [{ id: "4430027", fullName: "Sam LaPorta", position: { abbreviation: "TE" } }] }],
+      },
+      [ESPN_INJURIES_URL]: {
+        injuries: [
+          {
+            injuries: [
+              {
+                status: type,
+                date: "2026-10-09T12:00Z",
+                type: { name: `INJURY_STATUS_${type.toUpperCase()}` },
+                athlete: { displayName: "Sam LaPorta", position: { name: "Tight End" }, links: [{ href: "https://www.espn.com/nfl/player/_/id/4430027/sam-laporta" }] },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const laporta = (injury_status: string) => ({ "/players/nfl": { ...(kcUsageRoutes()["/players/nfl"] as object), "9509": { ...fixturePlayers["9509"]!, injury_status } } });
+    const zeroLaporta = { [PROJ_WEEK5]: { ...projectionsWeek5, "9509": { pts_ppr: 0 } } };
+
+    // ESPN IR, Sleeper Out: Sleeper would refuse the IR slot, so no IR move; Ian keeps the ir_stash slot.
+    const espnIr = await waivers({ ...laporta("Out"), ...espnLaporta("IR"), ...zeroLaporta });
+    expect((espnIr.data!.drop_candidates as Entry[]).filter((d) => d.id === "9509")).toEqual([]);
+    expect((espnIr.data!.ir_stash as Entry[]).map((e) => e.id)).toEqual(["11003"]);
+
+    // ESPN Out, Sleeper IR: the IR move is offered.
+    const sleeperIr = await waivers({ ...laporta("IR"), ...espnLaporta("Out"), ...zeroLaporta });
+    expect(sleeperIr.data!.drop_candidates).toEqual([expect.objectContaining({ id: "9509", action: "move_to_ir", status: expect.objectContaining({ designation: "Out", source: "espn" }) })]);
   });
 
   it("filters by position and rejects positions the league does not start", async () => {

@@ -41,7 +41,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
     {
       title: "Player usage trends",
       description:
-        "Week-by-week usage for chosen players or a whole roster: snap, target, carry, red zone and air yards share of their team, missed weeks, and a trend labeled rising, falling, steady or breakout (insufficient under 2 played weeks). Includes Sleeper injury status. Use for breakout, role-change and start/sit questions.",
+        "Week-by-week usage for chosen players or a whole roster: snap, target, carry, red zone and air yards share of their team, missed weeks, and a trend labeled rising, falling, steady or breakout (insufficient under 2 played weeks). Includes the merged ESPN + Sleeper injury status (ESPN's designation when it has one), with source and as_of. Use for breakout, role-change and start/sit questions.",
       inputSchema: {
         player_ids: z.array(z.string().trim().min(1)).max(30).optional().describe("Sleeper player_ids."),
         names: z.array(z.string().trim().min(1)).max(30).optional().describe("Player names when you do not have ids; the best QB/RB/WR/TE match per name is used."),
@@ -91,7 +91,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
     {
       title: "Team usage split",
       description:
-        "How one NFL offense splits snaps, targets, carries, red zone looks and air yards week by week, with each player's trend label, plus volume vacated by injured starters (Sleeper designation Out, IR, PUP or Doubtful) and the teammates in line to absorb it. Use for 'who benefits if X is out' and target-share questions.",
+        "How one NFL offense splits snaps, targets, carries, red zone looks and air yards week by week, with each player's trend label, plus volume vacated by injured starters (merged ESPN + Sleeper designation Out, IR, PUP, Doubtful, Sus or NA; each with its status, source and as_of) and the teammates in line to absorb it. Use for 'who benefits if X is out' and target-share questions.",
       inputSchema: {
         team: z.string().trim().toUpperCase().min(2).max(3).describe("NFL team code as Sleeper writes it, e.g. DET, KC, WAS."),
         weeks: weeksSchema,
@@ -106,7 +106,6 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
         const teamPlayers = ctx.players.all().filter((p) => p.team === team);
         if (teamPlayers.length === 0) throw new ToolError(`No NFL team "${team}". Use Sleeper's team codes, e.g. KC, DET, WAS.`);
         const [window, statuses] = await Promise.all([loadWindow(ctx, weeks), loadStatuses(ctx)]);
-        const asOf = isoDate(ctx.players.lastLoadedAt);
         const positionsOf = (id: string) => usagePositions(window.index, id, ctx.players.raw(id));
         const inPosition = (id: string) => !position || positionsOf(id).includes(position);
         const positionRank = (id: string) => {
@@ -143,8 +142,6 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           position: position ?? "all",
           note: USAGE_NOTE,
           ...espnUnavailable(statuses),
-          status_source: "sleeper",
-          status_as_of: asOf,
           players,
           vacated,
         };
@@ -311,7 +308,7 @@ export function registerIntelTools(server: McpServer, ctx: ServerContext): void 
           positions: position ? new Set([position]) : startable,
           proj: projOf,
           projAhead: (id, weeksAhead) => (weeksAhead === 1 ? nextProjOf(id) : next2ProjOf(id)),
-          statusOf: (id) => statuses.statusOf(id),
+          statusOf: (id) => ({ ...statuses.statusOf(id), ir_designation: ctx.players.raw(id)?.injury_status ?? null }),
           refOf: (id) => ctx.players.ref(id),
           trendingAdds: new Map(trending.map((t) => [t.player_id, t.count])),
           irSlots: irOpen,
@@ -450,7 +447,7 @@ const NEWS_HOURS = 72;
 const BENCH_REPORTED = 5;
 
 const WAIVER_NOTE =
-  "proj is league-scored for the target week; proj_next3 adds the next two weeks. start_gain compares proj with the weakest starter in your optimal lineup that the player could replace; start_now needs at least 1 point and lists at most one K and one DEF (the best of each); K and DEF suggestions were not covered by the 2025 backtest (docs/BACKTEST.md), which replayed QB, RB, WR and TE only. stash ranks by proj_next3 minus the 3-week projection of the starter the player would replace (replaces), so it favors positions where your starter is weakest; it accepts next week's projection when a player is on bye. horizon says how long a pickup should help (this_week, short_term, multi_week, rest_of_season, unknown, after_return), with horizon_reason. Every drop names replace_with, a pickup that beats the dropped player over 3 weeks by at least 5 points; highly ranked players go to bench_watch instead of being dropped. usage shares are percent of the team's QB/RB/WR/TE total; deltas compare the last 2 played weeks with earlier ones (or last week with the week before). Explain picks from each entry's reasons.";
+  "proj is league-scored for the target week; proj_next3 adds the next two weeks. start_gain compares proj with the weakest starter in your optimal lineup that the player could replace; start_now needs at least 1 point and lists at most one K and one DEF (the best of each); K and DEF suggestions were not covered by the 2025 backtest (docs/BACKTEST.md), which replayed QB, RB, WR and TE only. stash ranks by proj_next3 minus the 3-week projection of the starter the player would replace (replaces), so it favors positions where your starter is weakest; it accepts next week's projection when a player is on bye. horizon says how long a pickup should help (this_week, short_term, multi_week, rest_of_season, unknown, after_return), with horizon_reason. Every drop names replace_with, a pickup at one of the dropped player's positions that beats him over 3 weeks by at least 5 points; players in your optimal lineup are never dropped. IR moves and ir_stash follow Sleeper's injury_status (Sleeper enforces its IR slots), and your own IR moves take open slots before ir_stash; highly ranked players go to bench_watch instead of being dropped. usage shares are percent of the team's QB/RB/WR/TE total; deltas compare the last 2 played weeks with earlier ones (or last week with the week before). Explain picks from each entry's reasons.";
 const LINEUP_NOTE =
   "The lineup fields are get_lineup_projections' output: the optimal lineup is by projection only. optimal_lineup and suggested_changes can include taxi players, who cannot be started; bench_report and the flags already exclude IR and taxi players. starter_report covers the current starters, bench_report the 5 highest-projected bench players not on IR or taxi. flags come from designations, projections, usage and the optimal lineup, never from news text. usage.played_weeks is the sample size: with 2 played weeks the trend compares one game with one. news.updates are ESPN updates about the player alone; news.mentioned_in counts multi-player articles. news is null when the player has no ESPN link (always for K and DEF).";
 const MAX_MENTIONS = 3;

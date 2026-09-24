@@ -134,7 +134,7 @@ export async function simulate(season: Season, config: SimConfig): Promise<SimRe
       positions: new Set(POSITIONS),
       proj,
       projAhead,
-      statusOf: (id) => ({ designation: designations.get(id) ?? null, body_part: null }),
+      statusOf: (id) => ({ designation: designations.get(id) ?? null, ir_designation: designations.get(id) ?? null, body_part: null }),
       refOf: (id) => ({ name: season.players.get(id)?.name ?? id, pos: season.players.get(id)?.pos ?? null }),
       trendingAdds: new Map(),
       irSlots,

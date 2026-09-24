@@ -41,6 +41,11 @@ async function main() {
   await client.connect(ct);
 
   let failures = 0;
+  const skipped: string[] = [];
+  const skip = (name: string, why: string) => {
+    skipped.push(`${name} (${why})`);
+    console.log(`– ${name} skipped: ${why}`);
+  };
   const call = async (name: string, args: Record<string, unknown>, check: (data: Record<string, unknown>) => string) => {
     const started = Date.now();
     try {
@@ -101,14 +106,20 @@ async function main() {
       await call("get_matchups", { league_id: leagueId, username }, (d) => `week ${d.week}: ${(d.matchups as unknown[]).length} matchup(s)`);
       await call("get_lineup_projections", { league_id: leagueId, username }, (d) => `current ${d.current_projected_total} vs optimal ${d.optimal_projected_total}`);
       console.log(`\nIntel checks for league ${leagueId}:`);
-      await intelChecks(ctx, client, call, () => failures++, leagueId, username);
+      await intelChecks(ctx, client, call, () => failures++, skip, leagueId, username);
+    } else {
+      failures++;
+      console.log(`✘ league lookup → ${username} has no league this season and SLEEPER_LEAGUE_ID is not set; the league and intel checks cannot run`);
     }
+  } else {
+    skip("user, league and intel checks", "SLEEPER_USERNAME is not set");
   }
 
   await client.close();
   await server.close();
+  if (skipped.length) console.log(`\nSkipped: ${skipped.join("; ")}`);
   console.log(
-    `\n${failures === 0 ? "All smoke checks passed" : `${failures} smoke check(s) failed`}; ${requests} HTTP requests sent (Sleeper ${ctx.client.requestsSent}, ESPN ${ctx.espn.requestsSent}; cap ${MAX_REQUESTS}).`,
+    `\n${failures === 0 ? "All smoke checks passed" : `${failures} smoke check(s) failed`}${skipped.length ? `, ${skipped.length} skipped` : ""}; ${requests} HTTP requests sent (Sleeper ${ctx.client.requestsSent}, ESPN ${ctx.espn.requestsSent}; cap ${MAX_REQUESTS}).`,
   );
   process.exit(failures === 0 ? 0 : 1);
 }
@@ -143,7 +154,15 @@ function checkNewsItem(item: Obj, who: string): void {
 }
 
 /** Live checks for the six intel tools, shaped to catch a changed response from Sleeper or ESPN. */
-async function intelChecks(ctx: ServerContext, client: Client, check: Call, fail: () => void, leagueId: string, username: string): Promise<void> {
+async function intelChecks(
+  ctx: ServerContext,
+  client: Client,
+  check: Call,
+  fail: () => void,
+  skip: (name: string, why: string) => void,
+  leagueId: string,
+  username: string,
+): Promise<void> {
   const step = async (label: string, fn: () => Promise<string>) => {
     const started = Date.now();
     try {
@@ -216,6 +235,7 @@ async function intelChecks(ctx: ServerContext, client: Client, check: Call, fail
 
   await check("get_waiver_targets", { league_id: leagueId, username }, (d) => {
     for (const bucket of ["start_now", "stash", "ir_stash", "drop_candidates", "bench_watch"]) expect(Array.isArray(d[bucket]), `${bucket} missing`);
+    expect((d.start_now as Obj[]).length + (d.stash as Obj[]).length > 0, "no start_now or stash entries");
     expect(!d.espn_unavailable, `ESPN unavailable: ${d.espn_unavailable}`);
     const stash = d.stash as Obj[];
     const irStash = d.ir_stash as Obj[];
@@ -289,6 +309,8 @@ async function intelChecks(ctx: ServerContext, client: Client, check: Call, fail
       for (const v of d.vacated as Obj[]) checkStatus(v.status, v.name);
       return `${d.team}: ${players.length} players; target share sums ${sums.map((s) => (s === null ? "-" : s.toFixed(1))).join(", ")}; ${(d.vacated as Obj[]).length} vacated`;
     });
+  } else {
+    skip("get_team_usage", "no QB/RB/WR/TE starter with an NFL team in the lineup report");
   }
 
   const newsIds = rosterPlayers.filter((p) => p.news).slice(0, 3).map((p) => p.id);
@@ -303,8 +325,9 @@ async function intelChecks(ctx: ServerContext, client: Client, check: Call, fail
       }
       return players.map((p) => `${p.name} ${p.news.length} update(s), ${p.mentioned_in.length} mention(s)`).join("; ");
     });
+  } else {
+    skip("get_player_news", "no reported player has an ESPN link");
   }
-
 }
 
 main().catch((err) => {

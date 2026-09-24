@@ -8,6 +8,7 @@ import {
   pickupHorizon,
   positionsOf,
   projNext3,
+  plannedIrMoves,
   startablePositions,
   startGain,
   stashGain,
@@ -101,6 +102,7 @@ function candidate(id: string, positions: string[], extra: Partial<CandidateInpu
     next_proj: null,
     next2_proj: null,
     designation: null,
+    ir_designation: null,
     body_part: null,
     trend: null,
     trending_adds: null,
@@ -261,6 +263,11 @@ describe("waiverBuckets", () => {
     expect(stash[0]!.reasons[1]).toBe("Usage breakout: snap share 20% -> 80%, target share 5% -> 27.5% (last 2 played weeks vs earlier)");
   });
 
+  it("names the designation instead of a bye when a listed player projects 0 this week", () => {
+    const listed = candidate("listed", ["TE"], { proj: 0, next_proj: 9, designation: "Out" });
+    expect(waiverBuckets([listed], options()).stash[0]!.reasons[0]).toBe("Listed Out in week 5; projects 9.0 pts in week 6");
+  });
+
   it("keeps stash above the projection floor of 40% of the replaced starter", () => {
     const floor = THRESHOLDS.stashProjShare * 8;
     const below = candidate("below", ["TE"], { proj: floor - 0.1, opportunity: kelceIr });
@@ -276,9 +283,9 @@ describe("waiverBuckets", () => {
   });
 
   it("sends IR and PUP players only to ir_stash, with an open slot and a good enough rank", () => {
-    const ir = candidate("ir", ["RB"], { proj: 20, designation: "IR", body_part: "Knee", search_rank: 40, opportunity: kelceOut, trend: breakout });
-    const pup = candidate("pup", ["WR"], { designation: "PUP", search_rank: 12 });
-    const deep = candidate("deep", ["WR"], { designation: "IR", search_rank: THRESHOLDS.irStashRank + 1 });
+    const ir = candidate("ir", ["RB"], { proj: 20, designation: "IR", ir_designation: "IR", body_part: "Knee", search_rank: 40, opportunity: kelceOut, trend: breakout });
+    const pup = candidate("pup", ["WR"], { designation: "PUP", ir_designation: "PUP", search_rank: 12 });
+    const deep = candidate("deep", ["WR"], { designation: "IR", ir_designation: "IR", search_rank: THRESHOLDS.irStashRank + 1 });
     const buckets = waiverBuckets([ir, pup, deep], options());
     expect(buckets.start_now).toEqual([]);
     expect(buckets.stash).toEqual([]);
@@ -287,8 +294,27 @@ describe("waiverBuckets", () => {
     expect(waiverBuckets([ir, pup], options({ irSlots: 0 })).ir_stash).toEqual([]);
   });
 
+  it("decides IR eligibility from Sleeper's designation, and keeps any IR or PUP player out of start_now and stash", () => {
+    // ESPN IR, Sleeper Out: Sleeper would refuse the IR slot, and the merged IR keeps him out of start_now and stash.
+    const espnIr = candidate("espnIr", ["RB"], { proj: 20, next_proj: 20, designation: "IR", ir_designation: "Out", search_rank: 40 });
+    // ESPN Out, Sleeper IR: Sleeper accepts him on IR.
+    const sleeperIr = candidate("sleeperIr", ["RB"], { designation: "Out", ir_designation: "IR", search_rank: 50 });
+    const buckets = waiverBuckets([espnIr, sleeperIr], options());
+    expect(ids(buckets.ir_stash)).toEqual(["sleeperIr"]);
+    expect(buckets.ir_stash[0]!.reasons[0]).toBe("On IR; you have an open IR slot to hold him");
+    expect(buckets.start_now).toEqual([]);
+    expect(buckets.stash).toEqual([]);
+  });
+
+  it("never stashes a player projected 0 for all three weeks, even when the starter he would replace projects 0", () => {
+    const zeroTe = lineup.map((slot) => (slot.slot === "TE" ? { ...slot, pts: 0 } : slot));
+    const blank = candidate("blank", ["TE"], { proj: 0, next_proj: 0, next2_proj: 0 });
+    const byeWeek = candidate("bye", ["TE"], { proj: 0, next_proj: 3, next2_proj: 3 });
+    expect(ids(waiverBuckets([blank, byeWeek], options({ optimalLineup: zeroTe })).stash)).toEqual(["bye"]);
+  });
+
   it("caps ir_stash at irStashLimit, best rank first", () => {
-    const injured = [90, 10, 50, 30].map((rank) => candidate(`r${rank}`, ["WR"], { designation: "IR", search_rank: rank }));
+    const injured = [90, 10, 50, 30].map((rank) => candidate(`r${rank}`, ["WR"], { designation: "IR", ir_designation: "IR", search_rank: rank }));
     expect(ids(waiverBuckets(injured, options()).ir_stash)).toEqual(["r10", "r30", "r50"]);
   });
 
@@ -318,6 +344,15 @@ describe("projNext3", () => {
 
 describe("pickupHorizon", () => {
   const withStarter = (designation: string, name = "Travis Kelce"): Opportunity => ({ ...kelceOut, starter_name: name, designation });
+
+  it("needs at least restOfSeasonMinWeeks played weeks behind a rising trend for rest_of_season", () => {
+    const twoWeeks = trend(played([{ snap_share: 40, target_share: 5 }, { snap_share: 60, target_share: 15 }]), ["WR"]);
+    expect(twoWeeks).toMatchObject({ label: "breakout", played_weeks: 2 });
+    expect(THRESHOLDS.restOfSeasonMinWeeks).toBe(3);
+    expect(pickupHorizon(candidate("a", ["WR"], { proj: 5, next_proj: 5, next2_proj: 5, trend: twoWeeks }), "stash", 5).horizon).toBe("short_term");
+    expect(pickupHorizon(candidate("a", ["WR"], { trend: twoWeeks }), "start_now", 5).horizon).toBe("this_week");
+    expect(pickupHorizon(candidate("a", ["WR"], { trend: breakout }), "stash", 5).horizon).toBe("rest_of_season");
+  });
 
   it("falls back to this_week for start_now: a projection edge alone, or a starter who is Out or Doubtful", () => {
     expect(pickupHorizon(candidate("a", ["RB"]), "start_now", 5)).toEqual({ horizon: "this_week", reason: "Streamer: a projection edge for this week only" });
@@ -390,13 +425,13 @@ describe("pickupHorizon", () => {
 describe("dropCandidates", () => {
   const twoWeekFall = trend(played([{ snap_share: 80 }, { snap_share: 50 }]), ["WR"]);
   function bench(id: string, extra: Partial<BenchInput> = {}): BenchInput {
-    return { player_id: id, proj: 3, proj_next3: 10, search_rank: 300, designation: null, body_part: null, trend: falling, ...extra };
+    return { player_id: id, positions: ["WR"], proj: 3, proj_next3: 10, search_rank: 300, designation: null, ir_designation: null, body_part: null, trend: falling, ...extra };
   }
-  function pickup(id: string, proj_next3: number): WaiverEntry {
-    return { ...candidate(id, ["WR"]), start_gain: 2, replaces: null, proj_next3, horizon: { horizon: "this_week", reason: "" }, reasons: [] };
+  function pickup(id: string, proj_next3: number, positions = ["WR"]): WaiverEntry {
+    return { ...candidate(id, positions), start_gain: 2, replaces: null, proj_next3, horizon: { horizon: "this_week", reason: "" }, reasons: [] };
   }
   const drop = (players: BenchInput[], replacements: WaiverEntry[], irSlots = 0) =>
-    dropCandidates(players, { irSlots, limit: 10, replacements, nameOf: (id) => `Name ${id}`, week: 5 });
+    dropCandidates(players, { irSlots, optimalLineup: lineup, limit: 10, replacements, nameOf: (id) => `Name ${id}`, week: 5 });
 
   it("drops a falling player for the best pickup that clears the margin, with the 3-week comparison", () => {
     const { drops, bench_watch } = drop([bench("slow")], [pickup("p16", 16), pickup("p20", 20)]);
@@ -429,7 +464,7 @@ describe("dropCandidates", () => {
   });
 
   it("moves an IR player to an open slot without a replacement, and drops him only for a pickup when no slot is open", () => {
-    const ir = bench("ir", { proj: 0, proj_next3: 0, designation: "IR", body_part: "Knee", trend: null });
+    const ir = bench("ir", { proj: 0, proj_next3: 0, designation: "IR", ir_designation: "IR", body_part: "Knee", trend: null });
     expect(drop([ir], [], 1).drops).toEqual([expect.objectContaining({ player_id: "ir", action: "move_to_ir", replace_with: null, reasons: ["On IR (knee): move him to your open IR slot instead of dropping him"] })]);
     expect(drop([ir], [], 0).drops).toEqual([]);
     const noSlot = drop([ir], [pickup("p", 12)], 0).drops;
@@ -447,6 +482,36 @@ describe("dropCandidates", () => {
 
   it("leaves steady players alone", () => {
     expect(drop([bench("steady", { trend: null })], [pickup("big", 40)]).drops).toEqual([]);
+  });
+
+  it("replaces a dropped player only with a pickup sharing one of his positions", () => {
+    const rb = bench("rb", { positions: ["RB"] });
+    expect(drop([rb], [pickup("qb", 40, ["QB"])]).drops).toEqual([]);
+    const withRb = drop([rb], [pickup("qb", 40, ["QB"]), pickup("rbPick", 20, ["RB"])]).drops;
+    expect(withRb.map((d) => [d.player_id, d.replace_with?.player_id])).toEqual([["rb", "rbPick"]]);
+  });
+
+  it("never drops or moves a bench player who is in the optimal lineup", () => {
+    // wr2 and rb2 start in the optimal lineup (for example a bench player the optimizer promotes).
+    expect(drop([bench("wr2")], [pickup("big", 40)]).drops).toEqual([]);
+    expect(drop([bench("rb2", { ir_designation: "IR", trend: null })], [], 1).drops).toEqual([]);
+    expect(plannedIrMoves([bench("rb2", { ir_designation: "IR" })], 1, lineup)).toBe(0);
+  });
+
+  it("moves to IR by Sleeper's designation: not ESPN IR with Sleeper Out, but ESPN Out with Sleeper IR", () => {
+    const espnIr = bench("espnIr", { proj: 0, proj_next3: 0, designation: "IR", ir_designation: "Out", trend: null });
+    expect(drop([espnIr], [], 1).drops).toEqual([]);
+    const sleeperIr = bench("sleeperIr", { proj: 0, proj_next3: 0, designation: "Out", ir_designation: "IR", body_part: "Knee", trend: null });
+    expect(drop([sleeperIr], [], 1).drops).toEqual([
+      expect.objectContaining({ player_id: "sleeperIr", action: "move_to_ir", reasons: ["On IR (knee): move him to your open IR slot instead of dropping him"] }),
+    ]);
+  });
+
+  it("counts planned IR moves against the open slots", () => {
+    const ir = (id: string) => bench(id, { ir_designation: "IR" });
+    expect(plannedIrMoves([ir("a")], 1, lineup)).toBe(1);
+    expect(plannedIrMoves([ir("a"), ir("b")], 1, lineup)).toBe(1);
+    expect(plannedIrMoves([ir("a"), bench("b", { designation: "IR" })], 2, lineup)).toBe(1);
   });
 });
 

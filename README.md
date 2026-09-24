@@ -180,7 +180,13 @@ Usage from Sleeper's weekly stat rows, injury designations and news from ESPN's 
 | `get_player_trends` | Week-by-week snap, target, carry, red zone and air yards share of the team, missed weeks, and a trend label (rising, falling, steady, breakout, insufficient). |
 | `get_team_usage` | How one NFL offense splits that volume, with each player's trend, plus volume vacated by injured starters and the teammates in line to absorb it. |
 
-How far to trust `get_waiver_targets`: a replay of the 2025 season ([docs/BACKTEST.md](docs/BACKTEST.md)) found that `start_now` pickups beat the starter they replace but only tie the top-projected free agent at the position, `stash` picks beat the starter they would replace over 3 weeks but trail the top-projected free agent at their own position, drop suggestions are rare and held up, and `ir_stash` adds points in an otherwise empty IR slot. Injury status in the replay was a snap-based stand-in, so injury-driven advice is the least tested.
+How far to trust `get_waiver_targets`, from a replay of the 2025 season ([docs/BACKTEST.md](docs/BACKTEST.md)):
+
+- `start_now` pickups beat the starter they replace, and roughly tie the top-projected free agent when other managers don't claim players and trail it when they do.
+- `stash` picks beat the starter they would replace in the 2025 backtest, but that result is weak evidence because the backtest's future-week projections contained later injury news. The stash rule is chosen mainly because it avoids stashing players the team cannot start.
+- Drop suggestions are rare and outscored the dropped player, but roughly tie the best free agent at the position.
+- `ir_stash` adds points in an otherwise empty IR slot.
+- Injury status in the replay was a snap-based stand-in, so injury-driven advice is the least tested.
 
 ### Account tools (optional, session)
 

@@ -48,6 +48,11 @@ function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
   return { ...THRESHOLDS, ...tuning?.thresholds };
 }
 
+/** Whether Sleeper's designation lets the player into an IR slot. */
+export function irEligible(irDesignation: string | null): boolean {
+  return irDesignation !== null && IR_ELIGIBLE.has(irDesignation);
+}
+
 /** One slot of the optimal lineup from lineupAnalysis. `player_id` is "0" for an empty slot. */
 export interface LineupSlot {
   player_id: string;
@@ -86,6 +91,8 @@ export interface CandidateInput {
   next2_proj: number | null;
   /** Merged designation. */
   designation: string | null;
+  /** Sleeper's injury_status, which decides IR eligibility because Sleeper enforces its own IR slots. */
+  ir_designation: string | null;
   body_part: string | null;
   trend: Trend | null;
   trending_adds: number | null;
@@ -119,11 +126,15 @@ export interface WaiverBuckets {
 
 export interface BenchInput {
   player_id: string;
+  /** Fantasy positions; a drop's replacement must share one. */
+  positions: string[];
   proj: number;
   /** Target week plus the next two weeks. */
   proj_next3: number;
   search_rank: number | null;
   designation: string | null;
+  /** Sleeper's injury_status, which decides IR eligibility. */
+  ir_designation: string | null;
   body_part: string | null;
   trend: Trend | null;
 }
@@ -141,6 +152,8 @@ export interface BenchWatchEntry extends BenchInput {
 
 export interface DropOptions {
   irSlots: number;
+  /** The optimal lineup for the target week; bench players in it are never drop candidates. */
+  optimalLineup: readonly LineupSlot[];
   limit: number;
   /** start_now and stash entries a dropped player could be replaced with. */
   replacements: readonly WaiverEntry[];
@@ -246,13 +259,15 @@ export function stashScore(candidate: CandidateInput): number {
 
 /**
  * Sorts candidates into buckets:
- * - ir_stash: IR or PUP, an open IR slot, and search_rank within THRESHOLDS.irStashRank; by rank, at most
- *   THRESHOLDS.irStashLimit. IR and PUP players never go anywhere else.
+ * - ir_stash: Sleeper designation IR or PUP, an open IR slot, and search_rank within THRESHOLDS.irStashRank;
+ *   by rank, at most THRESHOLDS.irStashLimit. `irSlots` should already exclude slots planned for the
+ *   team's own move_to_ir players. Players whose Sleeper or merged designation is IR or PUP never go to
+ *   start_now or stash.
  * - start_now: start_gain of at least THRESHOLDS.minStartGain and no designation in OUT_DESIGNATIONS; by
  *   start_gain, with at most THRESHOLDS.startNowKDefLimit K and as many DEF. Uses the target week's
  *   projection only.
- * - stash: any other candidate whose higher of this week's and next week's projection is at least
- *   THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
+ * - stash: any other candidate whose higher of this week's and next week's projection is above 0 and at
+ *   least THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
  *   by proj_next3 minus that starter's projection over the same 3 weeks, at most THRESHOLDS.stashLimit.
  *   No injury opportunity or usage label is needed.
  */
@@ -268,13 +283,14 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     const fit = startGain(candidate.positions, candidate.proj, optimalLineup);
     const base = { ...candidate, start_gain: fit?.gain ?? null, replaces: fit?.replaces ?? null, proj_next3: projNext3(candidate) };
     const entry = (bucket: Bucket): WaiverEntry => {
-      const withHorizon = { ...base, horizon: pickupHorizon(candidate, bucket, week) };
+      const withHorizon = { ...base, horizon: pickupHorizon(candidate, bucket, week, t) };
       return { ...withHorizon, reasons: bucket === "ir_stash" ? irStashReasons(withHorizon) : candidateReasons(withHorizon, nameOf, week) };
     };
-    if (candidate.designation && IR_ELIGIBLE.has(candidate.designation)) {
+    if (irEligible(candidate.ir_designation)) {
       if (irSlots > 0 && candidate.search_rank !== null && candidate.search_rank <= t.irStashRank) irStash.push(entry("ir_stash"));
       continue;
     }
+    if (candidate.designation && IR_ELIGIBLE.has(candidate.designation)) continue;
     if (fit && fit.gain >= t.minStartGain && !OUT_DESIGNATIONS.has(candidate.designation ?? "")) {
       startNow.push(entry("start_now"));
       continue;
@@ -282,7 +298,7 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     const risingUsage = candidate.trend !== null && stashLabels.includes(candidate.trend.label) && candidate.trend.played_weeks >= stashMinPlayedWeeks;
     const floorProj = Math.max(candidate.proj, candidate.next_proj ?? 0);
     const signal = tuning?.stashRequireSignal ? Boolean(candidate.opportunity || risingUsage) : true;
-    if (signal && fit && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
+    if (signal && fit && floorProj > 0 && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
   const kickerDefenseCount = new Map<string, number>();
@@ -334,12 +350,15 @@ const HORIZON_PRECEDENCE: readonly Horizon[] = ["rest_of_season", "multi_week", 
  * this_week):
  * - an injury opportunity: "this_week" when the starter is Out or Doubtful, "multi_week" on IR or PUP,
  *   "unknown" when Sus or NA;
- * - with no injury opportunity, a rising or breakout usage label: "rest_of_season";
+ * - with no injury opportunity, a rising or breakout usage label over at least
+ *   THRESHOLDS.restOfSeasonMinWeeks played weeks: "rest_of_season";
  * - a stash entry's 3-week projection: "short_term", so a stash is never "this_week";
  * - a start_now entry's target-week projection edge: "this_week".
  */
-export function pickupHorizon(candidate: CandidateInput, bucket: Bucket, week: number): PickupHorizon {
-  if (bucket === "ir_stash") return { horizon: "after_return", reason: `Stash: helps after he returns from ${candidate.designation ?? "injury"}` };
+export function pickupHorizon(candidate: CandidateInput, bucket: Bucket, week: number, t: WaiverThresholds = THRESHOLDS): PickupHorizon {
+  if (bucket === "ir_stash") {
+    return { horizon: "after_return", reason: `Stash: helps after he returns from ${candidate.ir_designation ?? candidate.designation ?? "injury"}` };
+  }
   const signals: PickupHorizon[] = [];
   const opportunity = candidate.opportunity;
   if (opportunity) {
@@ -349,7 +368,11 @@ export function pickupHorizon(candidate: CandidateInput, bucket: Bucket, week: n
       const why = designation === "Sus" ? "suspended" : "unavailable (NA)";
       signals.push({ horizon: "unknown", reason: `Check news: ${name} is ${why} and the length is not known` });
     } else signals.push({ horizon: "this_week", reason: `Streamer: ${name} (${designation}) is expected back soon` });
-  } else if (candidate.trend && (candidate.trend.label === "rising" || candidate.trend.label === "breakout")) {
+  } else if (
+    candidate.trend &&
+    (candidate.trend.label === "rising" || candidate.trend.label === "breakout") &&
+    candidate.trend.played_weeks >= t.restOfSeasonMinWeeks
+  ) {
     const weeks = candidate.trend.played_weeks;
     signals.push({ horizon: "rest_of_season", reason: `Hold: usage ${candidate.trend.label} over ${weeks} played weeks`, played_weeks: weeks });
   }
@@ -363,14 +386,15 @@ export function pickupHorizon(candidate: CandidateInput, bucket: Bucket, week: n
 
 /**
  * Bench players to cut or move, with safeguards so a good player is never dropped for a worse one:
- * - IR or PUP players go to an open IR slot ("move_to_ir") while slots last; otherwise they are drop
- *   candidates.
+ * - Bench players in the optimal lineup for the target week are left alone.
+ * - Players Sleeper lists IR or PUP go to an open IR slot ("move_to_ir") while slots last; otherwise
+ *   they are drop candidates.
  * - Other bench players are drop candidates only with a falling usage trend over at least
  *   THRESHOLDS.dropMinWeeks played weeks.
  * - A drop candidate ranked within THRESHOLDS.protectRank goes to bench_watch instead.
- * - Every "drop" names replace_with: the best remaining start_now or stash pickup (any position) whose
- *   proj_next3 beats the player's by at least THRESHOLDS.dropMargin. Each pickup is used once. With no
- *   such pickup the player is not listed.
+ * - Every "drop" names replace_with: the best remaining start_now or stash pickup sharing a fantasy
+ *   position with the player whose proj_next3 beats the player's by at least THRESHOLDS.dropMargin.
+ *   Each pickup is used once. With no such pickup the player is not listed.
  * Lowest projection first.
  */
 export function dropCandidates(bench: readonly BenchInput[], options: DropOptions): { drops: DropEntry[]; bench_watch: BenchWatchEntry[] } {
@@ -380,10 +404,10 @@ export function dropCandidates(bench: readonly BenchInput[], options: DropOption
   const unused = [...options.replacements].sort((a, b) => b.proj_next3 - a.proj_next3);
   const drops: DropEntry[] = [];
   const benchWatch: BenchWatchEntry[] = [];
-  for (const player of [...bench].sort((a, b) => a.proj - b.proj)) {
-    const injury = player.designation ? `${player.designation}${bodyPart(player.body_part)}` : "";
+  for (const player of droppable(bench, options.optimalLineup).sort((a, b) => a.proj - b.proj)) {
+    const injury = player.ir_designation ? `${player.ir_designation}${bodyPart(player.body_part)}` : "";
     const reasons: string[] = [];
-    if (player.designation && IR_ELIGIBLE.has(player.designation)) {
+    if (irEligible(player.ir_designation)) {
       if (slotsLeft > 0) {
         slotsLeft--;
         drops.push({ ...player, action: "move_to_ir", replace_with: null, reasons: [`On ${injury}: move him to your open IR slot instead of dropping him`] });
@@ -401,7 +425,9 @@ export function dropCandidates(bench: readonly BenchInput[], options: DropOption
       benchWatch.push({ ...player, reasons: ["Highly ranked: consider benching, not dropping", `Sleeper rank ${player.search_rank}`, ...reasons] });
       continue;
     }
-    const index = unused.findIndex((pickup) => pickup.proj_next3 - player.proj_next3 >= t.dropMargin);
+    const index = unused.findIndex(
+      (pickup) => pickup.positions.some((pos) => player.positions.includes(pos)) && pickup.proj_next3 - player.proj_next3 >= t.dropMargin,
+    );
     if (index === -1) continue;
     const [replaceWith] = unused.splice(index, 1);
     if (!replaceWith) continue;
@@ -412,6 +438,17 @@ export function dropCandidates(bench: readonly BenchInput[], options: DropOption
     drops.push({ ...player, action: "drop", replace_with: replaceWith, reasons });
   }
   return { drops: drops.slice(0, limit), bench_watch: benchWatch.slice(0, limit) };
+}
+
+/** Bench players that dropCandidates considers: those not in the optimal lineup for the target week. */
+function droppable(bench: readonly BenchInput[], optimalLineup: readonly LineupSlot[]): BenchInput[] {
+  const inLineup = new Set(optimalLineup.map((slot) => slot.player_id));
+  return bench.filter((player) => !inLineup.has(player.player_id));
+}
+
+/** How many of the team's own players dropCandidates will move to IR, so ir_stash only offers the slots left. */
+export function plannedIrMoves(bench: readonly BenchInput[], irSlots: number, optimalLineup: readonly LineupSlot[]): number {
+  return Math.min(irSlots, droppable(bench, optimalLineup).filter((player) => irEligible(player.ir_designation)).length);
 }
 
 export interface WaiverTargetsInput {
@@ -430,8 +467,11 @@ export interface WaiverTargetsInput {
   proj: (playerId: string) => number;
   /** League-scored projection 1 or 2 weeks after the target week, or null when there is none. */
   projAhead: (playerId: string, weeksAhead: 1 | 2) => number | null;
-  /** Each player's designation and body part (merged status in the tool). */
-  statusOf: (playerId: string) => { designation: string | null; body_part: string | null };
+  /**
+   * Each player's designation and body part (merged status in the tool), and the designation that
+   * decides IR eligibility (Sleeper's injury_status in the tool).
+   */
+  statusOf: (playerId: string) => { designation: string | null; ir_designation: string | null; body_part: string | null };
   refOf: (playerId: string) => { name: string; pos: string | null };
   trendingAdds: ReadonlyMap<string, number>;
   irSlots: number;
@@ -516,6 +556,7 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
       next_proj: projAhead(p.player_id, 1),
       next2_proj: projAhead(p.player_id, 2),
       designation: status.designation,
+      ir_designation: status.ir_designation,
       body_part: status.body_part,
       trend: trends.get(p.player_id) ?? null,
       trending_adds: input.trendingAdds.get(p.player_id) ?? null,
@@ -523,9 +564,31 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     };
   });
   const nameOf = (id: string) => refOf(id).name;
+
+  const onField = new Set([...input.roster.starters, ...input.roster.reserve, ...input.roster.taxi]);
+  const bench: BenchInput[] = input.roster.players
+    .filter((id) => id && id !== "0" && !onField.has(id))
+    .map((id) => {
+      const status = statusOf(id);
+      const player = byId.get(id);
+      const own = proj(id);
+      return {
+        player_id: id,
+        positions: player ? positionsOf(player) : [],
+        proj: own,
+        proj_next3: projNext3({ proj: own, next_proj: projAhead(id, 1), next2_proj: projAhead(id, 2) }),
+        search_rank: player?.search_rank ?? null,
+        designation: status.designation,
+        ir_designation: status.ir_designation,
+        body_part: status.body_part,
+        trend: trends.get(id) ?? null,
+      };
+    });
+
+  // IR slots are shared: the team's own IR moves come first, and ir_stash only offers what is left.
   const buckets = waiverBuckets(candidates, {
     optimalLineup: input.optimalLineup,
-    irSlots: input.irSlots,
+    irSlots: input.irSlots - plannedIrMoves(bench, input.irSlots, input.optimalLineup),
     nameOf,
     limit: input.limit,
     week: input.week,
@@ -533,24 +596,9 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     tuning: input.tuning,
   });
 
-  const onField = new Set([...input.roster.starters, ...input.roster.reserve, ...input.roster.taxi]);
-  const bench: BenchInput[] = input.roster.players
-    .filter((id) => id && id !== "0" && !onField.has(id))
-    .map((id) => {
-      const status = statusOf(id);
-      const own = proj(id);
-      return {
-        player_id: id,
-        proj: own,
-        proj_next3: projNext3({ proj: own, next_proj: projAhead(id, 1), next2_proj: projAhead(id, 2) }),
-        search_rank: byId.get(id)?.search_rank ?? null,
-        designation: status.designation,
-        body_part: status.body_part,
-        trend: trends.get(id) ?? null,
-      };
-    });
   const { drops, bench_watch } = dropCandidates(bench, {
     irSlots: input.irSlots,
+    optimalLineup: input.optimalLineup,
     limit: input.limit,
     replacements: [...buckets.start_now, ...buckets.stash],
     nameOf,
@@ -605,7 +653,8 @@ export function usageReason(trend: Trend | null): string | null {
 function candidateReasons(entry: Omit<WaiverEntry, "reasons">, nameOf: (playerId: string) => string, week: number): string[] {
   const reasons: string[] = [];
   if (entry.proj === 0 && (entry.next_proj ?? 0) > 0) {
-    reasons.push(`No game in week ${week}; projects ${fmt(entry.next_proj ?? 0)} pts in week ${week + 1}`);
+    const nextWeek = `projects ${fmt(entry.next_proj ?? 0)} pts in week ${week + 1}`;
+    reasons.push(entry.designation ? `Listed ${entry.designation} in week ${week}; ${nextWeek}` : `No game in week ${week}; ${nextWeek}`);
   } else if (entry.replaces && entry.start_gain !== null) {
     const target =
       entry.replaces.player_id === "0"
@@ -622,7 +671,7 @@ function candidateReasons(entry: Omit<WaiverEntry, "reasons">, nameOf: (playerId
 }
 
 function irStashReasons(entry: Omit<WaiverEntry, "reasons">): string[] {
-  const reasons = [`On ${entry.designation}${bodyPart(entry.body_part)}; you have an open IR slot to hold him`];
+  const reasons = [`On ${entry.ir_designation ?? entry.designation}${bodyPart(entry.body_part)}; you have an open IR slot to hold him`];
   if (entry.search_rank !== null) reasons.push(`Sleeper rank ${entry.search_rank}`);
   if (entry.trending_adds) reasons.push(`Added in ${entry.trending_adds.toLocaleString("en-US")} Sleeper leagues in the last 24 hours`);
   return reasons;

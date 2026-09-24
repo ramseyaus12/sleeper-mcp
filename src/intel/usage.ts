@@ -25,6 +25,8 @@ export const THRESHOLDS = {
   trendingAdds: 100,
   /** start_now: smallest start_gain (points) that counts, so fractional projection edges do not. */
   minStartGain: 1.0,
+  /** horizon: played weeks a rising or breakout trend needs before it makes a pickup rest_of_season. */
+  restOfSeasonMinWeeks: 3,
   /** start_now: most K entries, and most DEF entries, listed (the best by start_gain). */
   startNowKDefLimit: 1,
   /** stash: projection must be at least this share of the weakest starter's projection at that slot. */
