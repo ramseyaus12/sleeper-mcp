@@ -247,7 +247,8 @@ export function stashScore(candidate: CandidateInput): number {
  * - ir_stash: IR or PUP, an open IR slot, and search_rank within THRESHOLDS.irStashRank; by rank, at most
  *   THRESHOLDS.irStashLimit. IR and PUP players never go anywhere else.
  * - start_now: start_gain of at least THRESHOLDS.minStartGain and no designation in OUT_DESIGNATIONS; by
- *   start_gain. Uses the target week's projection only.
+ *   start_gain, with at most THRESHOLDS.startNowKDefLimit K and as many DEF. Uses the target week's
+ *   projection only.
  * - stash: any other candidate whose higher of this week's and next week's projection is at least
  *   THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
  *   by proj_next3, at most THRESHOLDS.stashLimit. No injury opportunity or usage label is needed.
@@ -281,6 +282,14 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     if (signal && fit && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
+  const kickerDefenseCount = new Map<string, number>();
+  const startNowListed = startNow.filter((e) => {
+    const position = e.positions.find((p) => p === "K" || p === "DEF");
+    if (!position) return true;
+    const count = (kickerDefenseCount.get(position) ?? 0) + 1;
+    kickerDefenseCount.set(position, count);
+    return count <= t.startNowKDefLimit;
+  });
   if (tuning?.stashSort === "score") stash.sort((a, b) => stashScore(b) - stashScore(a));
   else if (tuning?.stashSort === "gain_next3") {
     const replacedNext3 = (e: WaiverEntry) => (e.replaces && e.replaces.player_id !== "0" ? (options.starterNext3?.(e.replaces.player_id) ?? 0) : 0);
@@ -288,7 +297,7 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
   } else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
   irStash.sort((a, b) => (a.search_rank ?? Number.MAX_SAFE_INTEGER) - (b.search_rank ?? Number.MAX_SAFE_INTEGER));
   return {
-    start_now: startNow.slice(0, limit),
+    start_now: startNowListed.slice(0, limit),
     stash: stash.slice(0, Math.min(limit, t.stashLimit)),
     ir_stash: irStash.slice(0, t.irStashLimit),
   };

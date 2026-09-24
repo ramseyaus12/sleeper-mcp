@@ -226,6 +226,21 @@ describe("waiverBuckets", () => {
     expect(ids(edge.stash)).toEqual(["wr", "qb"]);
   });
 
+  it("lists at most one K and one DEF in start_now, the best of each", () => {
+    const pool = [
+      candidate("def1", ["DEF"], { proj: 9 }),
+      candidate("def2", ["DEF"], { proj: 12 }),
+      candidate("def3", ["DEF"], { proj: 10 }),
+      candidate("k1", ["K"], { proj: 9 }),
+      candidate("k2", ["K"], { proj: 11 }),
+      candidate("rb", ["RB"], { proj: 11 }),
+      candidate("wr", ["WR"], { proj: 12 }),
+    ];
+    expect(THRESHOLDS.startNowKDefLimit).toBe(1);
+    expect(ids(waiverBuckets(pool, options()).start_now)).toEqual(["def2", "k2", "rb", "wr"]);
+    expect(ids(waiverBuckets(pool, options({ limit: 2 })).start_now)).toEqual(["def2", "k2"]);
+  });
+
   it("still starts a one-week opening that beats a starter", () => {
     const { start_now, stash } = waiverBuckets([candidate("out", ["TE"], { proj: 12, opportunity: kelceOut })], options());
     expect(ids(start_now)).toEqual(["out"]);

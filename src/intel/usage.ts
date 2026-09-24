@@ -25,6 +25,8 @@ export const THRESHOLDS = {
   trendingAdds: 100,
   /** start_now: smallest start_gain (points) that counts, so fractional projection edges do not. */
   minStartGain: 1.0,
+  /** start_now: most K entries, and most DEF entries, listed (the best by start_gain). */
+  startNowKDefLimit: 1,
   /** stash: projection must be at least this share of the weakest starter's projection at that slot. */
   stashProjShare: 0.4,
   /** stash: most entries returned (fewer when the tool's limit is lower). */

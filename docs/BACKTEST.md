@@ -33,6 +33,7 @@ Generated 2026-09-24T22:47:56.063Z. Decision weeks 3-14, rest of season through 
 - Status is a snap-based proxy: a player who has played but took no offensive snap in his team's latest game is Out. IR and PUP cannot be known.
 - **The default run (long absence off) cannot test injury-driven stash logic**: every injury opportunity is a one-week Out, whose this_week horizon keeps it out of stash. The long-absence run (2+ straight missed games = IR proxy) is the only test of injury-driven stash, ir_stash and move_to_ir.
 - No trending adds, no depth charts (injured starters are found by snap share only), and no historical search_rank.
+- K and DEF suggestions were not covered: the replay uses QB, RB, WR and TE only, so start_now picks at K and DEF (the tool lists at most one of each) are untested.
 - TE bonus check: of 90 week 5 TE rows with snaps, 56 carry bonus_rec_te.
 
 Columns: gains are your suggested player's actual points minus the other player's, averaged. 'vs replaced' is the starter he would replace (for drop: the dropped player; for ir_stash: an empty IR slot, so 0). 'vs baseline' is the highest week-N-projected free agent at the same position (none for ir_stash). '= baseline' counts suggestions that are the baseline player. 'wins 3w' is the share of positive 3-week gains.
