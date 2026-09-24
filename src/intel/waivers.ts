@@ -23,6 +23,26 @@ export const IR_ELIGIBLE: ReadonlySet<string> = new Set(["IR", "PUP"]);
 
 const TEAM_DEFENSE = /^[A-Z]{2,3}$/;
 
+export type WaiverThresholds = { [K in keyof typeof THRESHOLDS]: number };
+
+/** Overrides for experiments such as the backtest. Every field defaults to the tool's behavior. */
+export interface WaiverTuning {
+  /** Replaces individual THRESHOLDS values used by the waiver functions. */
+  thresholds?: Partial<WaiverThresholds>;
+  /** Usage labels that qualify a player for stash without an injury opportunity (default rising and breakout). */
+  stashLabels?: readonly ("rising" | "breakout")[];
+  /** Played weeks a usage trend needs before its label qualifies for stash (default 0). */
+  stashMinPlayedWeeks?: number;
+  /** stash order: stashScore (default) or proj_next3. */
+  stashSort?: "score" | "proj_next3";
+  /** Most stash entries (default: the limit every bucket uses). */
+  stashLimit?: number;
+}
+
+function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
+  return { ...THRESHOLDS, ...tuning?.thresholds };
+}
+
 /** One slot of the optimal lineup from lineupAnalysis. `player_id` is "0" for an empty slot. */
 export interface LineupSlot {
   player_id: string;
@@ -122,6 +142,7 @@ export interface DropOptions {
   nameOf: (playerId: string) => string;
   /** Target week, for the 3-week comparison. */
   week: number;
+  tuning?: WaiverTuning;
 }
 
 export interface BucketOptions {
@@ -132,6 +153,7 @@ export interface BucketOptions {
   limit: number;
   /** Target week, for the bye-week reason. */
   week: number;
+  tuning?: WaiverTuning;
 }
 
 export interface PoolInput {
@@ -145,6 +167,7 @@ export interface PoolInput {
   beneficiaries: ReadonlySet<string>;
   /** Players whose overall usage label is rising or breakout. */
   rising: ReadonlySet<string>;
+  tuning?: WaiverTuning;
 }
 
 /** Fantasy positions for a player; team defenses (id = team code) are DEF. */
@@ -178,7 +201,7 @@ export function candidatePool(input: PoolInput): Player[] {
   const topRanked = new Set(
     [...eligible]
       .sort((a, b) => rank(a) - rank(b))
-      .slice(0, THRESHOLDS.poolRank)
+      .slice(0, thresholdsFor(input.tuning).poolRank)
       .map((p) => p.player_id),
   );
   return eligible.filter(
@@ -226,7 +249,10 @@ export function stashScore(candidate: CandidateInput): number {
  *   a one-week opening is only worth a pickup as a start_now streamer.
  */
 export function waiverBuckets(candidates: readonly CandidateInput[], options: BucketOptions): WaiverBuckets {
-  const { optimalLineup, irSlots, nameOf, limit, week } = options;
+  const { optimalLineup, irSlots, nameOf, limit, week, tuning } = options;
+  const t = thresholdsFor(tuning);
+  const stashLabels: readonly string[] = tuning?.stashLabels ?? ["rising", "breakout"];
+  const stashMinPlayedWeeks = tuning?.stashMinPlayedWeeks ?? 0;
   const startNow: WaiverEntry[] = [];
   const stash: WaiverEntry[] = [];
   const irStash: WaiverEntry[] = [];
@@ -238,24 +264,25 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
       return { ...withHorizon, reasons: bucket === "ir_stash" ? irStashReasons(withHorizon) : candidateReasons(withHorizon, nameOf, week) };
     };
     if (candidate.designation && IR_ELIGIBLE.has(candidate.designation)) {
-      if (irSlots > 0 && candidate.search_rank !== null && candidate.search_rank <= THRESHOLDS.irStashRank) irStash.push(entry("ir_stash"));
+      if (irSlots > 0 && candidate.search_rank !== null && candidate.search_rank <= t.irStashRank) irStash.push(entry("ir_stash"));
       continue;
     }
-    if (fit && fit.gain >= THRESHOLDS.minStartGain && !OUT_DESIGNATIONS.has(candidate.designation ?? "")) {
+    if (fit && fit.gain >= t.minStartGain && !OUT_DESIGNATIONS.has(candidate.designation ?? "")) {
       startNow.push(entry("start_now"));
       continue;
     }
-    const risingUsage = candidate.trend?.label === "rising" || candidate.trend?.label === "breakout";
+    const risingUsage = candidate.trend !== null && stashLabels.includes(candidate.trend.label) && candidate.trend.played_weeks >= stashMinPlayedWeeks;
     const floorProj = Math.max(candidate.proj, candidate.next_proj ?? 0);
-    if ((candidate.opportunity || risingUsage) && fit && floorProj >= THRESHOLDS.stashProjShare * fit.replaces.pts) {
+    if ((candidate.opportunity || risingUsage) && fit && floorProj >= t.stashProjShare * fit.replaces.pts) {
       const stashed = entry("stash");
       if (stashed.horizon.horizon !== "this_week") stash.push(stashed);
     }
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
-  stash.sort((a, b) => stashScore(b) - stashScore(a));
+  if (tuning?.stashSort === "proj_next3") stash.sort((a, b) => b.proj_next3 - a.proj_next3);
+  else stash.sort((a, b) => stashScore(b) - stashScore(a));
   irStash.sort((a, b) => (a.search_rank ?? Number.MAX_SAFE_INTEGER) - (b.search_rank ?? Number.MAX_SAFE_INTEGER));
-  return { start_now: startNow.slice(0, limit), stash: stash.slice(0, limit), ir_stash: irStash.slice(0, THRESHOLDS.irStashLimit) };
+  return { start_now: startNow.slice(0, limit), stash: stash.slice(0, tuning?.stashLimit ?? limit), ir_stash: irStash.slice(0, t.irStashLimit) };
 }
 
 /** Projection over the target week and the next two, counting unknown weeks as 0. */
@@ -309,6 +336,7 @@ export function pickupHorizon(candidate: CandidateInput, bucket: Bucket): Pickup
  */
 export function dropCandidates(bench: readonly BenchInput[], options: DropOptions): { drops: DropEntry[]; bench_watch: BenchWatchEntry[] } {
   const { irSlots, limit, nameOf, week } = options;
+  const t = thresholdsFor(options.tuning);
   let slotsLeft = irSlots;
   const unused = [...options.replacements].sort((a, b) => b.proj_next3 - a.proj_next3);
   const drops: DropEntry[] = [];
@@ -323,18 +351,18 @@ export function dropCandidates(bench: readonly BenchInput[], options: DropOption
         continue;
       }
       reasons.push(`On ${injury} and no IR slot is open`);
-    } else if (player.trend?.label === "falling" && player.trend.played_weeks >= THRESHOLDS.dropMinWeeks) {
+    } else if (player.trend?.label === "falling" && player.trend.played_weeks >= t.dropMinWeeks) {
       reasons.push(`Projects ${fmt(player.proj)} pts`);
       const usage = usageReason(player.trend);
       if (usage) reasons.push(usage);
     } else {
       continue;
     }
-    if (player.search_rank !== null && player.search_rank <= THRESHOLDS.protectRank) {
+    if (player.search_rank !== null && player.search_rank <= t.protectRank) {
       benchWatch.push({ ...player, reasons: ["Highly ranked: consider benching, not dropping", `Sleeper rank ${player.search_rank}`, ...reasons] });
       continue;
     }
-    const index = unused.findIndex((pickup) => pickup.proj_next3 - player.proj_next3 >= THRESHOLDS.dropMargin);
+    const index = unused.findIndex((pickup) => pickup.proj_next3 - player.proj_next3 >= t.dropMargin);
     if (index === -1) continue;
     const [replaceWith] = unused.splice(index, 1);
     if (!replaceWith) continue;
@@ -370,6 +398,7 @@ export interface WaiverTargetsInput {
   irSlots: number;
   limit: number;
   week: number;
+  tuning?: WaiverTuning;
 }
 
 export interface WaiverTargets extends WaiverBuckets {
@@ -436,6 +465,7 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     trendingAdds: input.trendingAdds,
     beneficiaries: new Set(opportunities.keys()),
     rising,
+    tuning: input.tuning,
   });
   const candidates: CandidateInput[] = pool.map((p) => {
     const status = statusOf(p.player_id);
@@ -454,7 +484,14 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     };
   });
   const nameOf = (id: string) => refOf(id).name;
-  const buckets = waiverBuckets(candidates, { optimalLineup: input.optimalLineup, irSlots: input.irSlots, nameOf, limit: input.limit, week: input.week });
+  const buckets = waiverBuckets(candidates, {
+    optimalLineup: input.optimalLineup,
+    irSlots: input.irSlots,
+    nameOf,
+    limit: input.limit,
+    week: input.week,
+    tuning: input.tuning,
+  });
 
   const onField = new Set([...input.roster.starters, ...input.roster.reserve, ...input.roster.taxi]);
   const bench: BenchInput[] = input.roster.players
@@ -478,6 +515,7 @@ export function waiverTargets(input: WaiverTargetsInput): WaiverTargets {
     replacements: [...buckets.start_now, ...buckets.stash],
     nameOf,
     week: input.week,
+    tuning: input.tuning,
   });
 
   return { ...buckets, drop_candidates: drops, bench_watch, trends, histories };
