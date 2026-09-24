@@ -37,6 +37,10 @@ export interface WaiverTuning {
   stashSort?: "score" | "proj_next3";
   /** Most stash entries (default: the limit every bucket uses). */
   stashLimit?: number;
+  /** When false, stash needs neither an injury opportunity nor a rising/breakout label (default true). */
+  stashRequireSignal?: boolean;
+  /** When true, stash also takes players whose horizon is "this_week" (default false). */
+  stashAllowThisWeek?: boolean;
 }
 
 function thresholdsFor(tuning: WaiverTuning | undefined): WaiverThresholds {
@@ -273,9 +277,10 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     }
     const risingUsage = candidate.trend !== null && stashLabels.includes(candidate.trend.label) && candidate.trend.played_weeks >= stashMinPlayedWeeks;
     const floorProj = Math.max(candidate.proj, candidate.next_proj ?? 0);
-    if ((candidate.opportunity || risingUsage) && fit && floorProj >= t.stashProjShare * fit.replaces.pts) {
+    const signal = (tuning?.stashRequireSignal ?? true) ? Boolean(candidate.opportunity || risingUsage) : true;
+    if (signal && fit && floorProj >= t.stashProjShare * fit.replaces.pts) {
       const stashed = entry("stash");
-      if (stashed.horizon.horizon !== "this_week") stash.push(stashed);
+      if (tuning?.stashAllowThisWeek || stashed.horizon.horizon !== "this_week") stash.push(stashed);
     }
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
