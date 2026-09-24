@@ -225,7 +225,7 @@ For each NFL team:
 
 ### Waiver buckets
 
-Candidate pool: unrostered, active, at positions the league starts. Phase 0 found real players that fail isActive (see DATA_NOTES.md). Decide this pool's active filter in Phase 4 using those findings. Take the union of: top 150 by Sleeper rank, top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. Cap at about 60 candidates before fetching news.
+Candidate pool: unrostered, on an NFL team, at positions the league starts. Do not use isActive for this pool: Sleeper gives injured reserve players status "Inactive" while active stays true (DATA_NOTES.md). Use "on an NFL team" instead. Players with injury_status IR or PUP can only land in stash, flagged as needing an IR slot, and only when the team has an open IR slot (league.settings.reserve_slots minus the players in roster.reserve). Take the union of: top 150 by Sleeper rank, top 100 trending adds, anyone flagged as a beneficiary, anyone with a `rising` or `breakout` label. Cap at about 60 candidates before fetching news.
 
 For each candidate compute:
 
