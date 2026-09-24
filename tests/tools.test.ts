@@ -861,11 +861,13 @@ describe("get_waiver_targets", () => {
     expect(backup!.reasons).toContain("TE Travis Kelce (Out) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
   });
 
-  it("ranks stash by 3-week projection", async () => {
+  it("ranks stash by 3-week edge over the starter each would replace, not by raw projection", async () => {
     const { data } = await waivers({ [PROJ_WEEK5]: { ...projectionsWeek5, "12002": { rec: 4, rec_yd: 30 } } });
     const stash = data!.stash as Entry[];
-    expect(stash.map((e) => e.id)).toEqual(["11000", "12002"]);
-    expect(stash.map((e) => (e.proj_next3 as { total: number }).total)).toEqual([8, 7]);
+    // Only week 5 has projections. The TE (7) would replace LaPorta (10.6): -3.6. The RB (8) would replace Hall (13.4): -5.4.
+    expect(stash.map((e) => e.id)).toEqual(["12002", "11000"]);
+    expect(stash.map((e) => (e.proj_next3 as { total: number }).total)).toEqual([7, 8]);
+    expect(stash.map((e) => (e.replaces as { name: string; pts: number }).name)).toEqual(["Sam LaPorta", "Breece Hall"]);
   });
 
   it("stashes Kelce's backup, with Kelce's vacated volume as the opportunity", async () => {

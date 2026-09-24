@@ -14,17 +14,18 @@ const END_WEEK = 17;
 const WEEKS = 12;
 
 /**
- * The default stash rule (V6), V7 (ranked by the 3-week edge over the starter each pick would replace)
- * and, for reference, a rule that requires an injury opportunity or a rising or breakout label, ranked by
+ * The default stash rule (V7: ranked by the 3-week edge over the starter each pick would replace), the
+ * earlier default V6 (ranked by proj_next3), V8 (V7 with at most one stash per position) and, for
+ * reference, a rule that requires an injury opportunity or a rising or breakout label, ranked by
  * stashScore, limit 10.
  */
 const VARIANTS: { name: string; label: string; tuning: WaiverTuning | undefined }[] = [
-  { name: "current", label: "default (V6): projection floor only, rank by proj_next3, limit 5", tuning: undefined },
   {
-    name: "V7",
-    label: "projection floor only, rank by proj_next3 minus the replaced starter's 3-week projection, limit 5",
-    tuning: { stashSort: "gain_next3" },
+    name: "current",
+    label: "default (V7): projection floor only, rank by proj_next3 minus the replaced starter's 3-week projection, limit 5",
+    tuning: undefined,
   },
+  { name: "V6", label: "projection floor only, rank by proj_next3, limit 5", tuning: { stashSort: "proj_next3" } },
   {
     name: "V8",
     label: "V7's ranking, at most one stash per position, then the top 5",

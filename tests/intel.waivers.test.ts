@@ -10,6 +10,7 @@ import {
   projNext3,
   startablePositions,
   startGain,
+  stashGain,
   usageReason,
   waiverBuckets,
   type BenchInput,
@@ -109,7 +110,8 @@ function candidate(id: string, positions: string[], extra: Partial<CandidateInpu
 }
 
 function options(extra: Partial<BucketOptions> = {}): BucketOptions {
-  return { optimalLineup: lineup, irSlots: 1, nameOf: (id) => `Name ${id}`, limit: 10, week: 5, ...extra };
+  const starterNext3 = (id: string) => 3 * (lineup.find((s) => s.player_id === id)?.pts ?? 0);
+  return { optimalLineup: lineup, irSlots: 1, nameOf: (id) => `Name ${id}`, limit: 10, week: 5, starterNext3, ...extra };
 }
 
 const ids = (entries: { player_id: string }[]) => entries.map((e) => e.player_id);
@@ -209,7 +211,7 @@ describe("waiverBuckets", () => {
     expect(stash[1]!.reasons).toContain("TE Travis Kelce (Out, knee) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
   });
 
-  it("ranks stash by 3-week projection and keeps at most stashLimit", () => {
+  it("keeps at most stashLimit stash entries, best 3-week edge first", () => {
     const pool = [9, 14, 6, 11, 20, 7, 12].map((next3, i) => candidate(`p${i}`, ["WR"], { proj: 4, next_proj: next3 - 4, next2_proj: 0 }));
     const { stash } = waiverBuckets(pool, options());
     expect(THRESHOLDS.stashLimit).toBe(5);
@@ -217,13 +219,15 @@ describe("waiverBuckets", () => {
     expect(waiverBuckets(pool, options({ limit: 3 })).stash.map((e) => e.proj_next3)).toEqual([20, 14, 12]);
   });
 
-  it("with stashSort gain_next3, ranks stash by 3-week edge over the starter each would replace", () => {
+  it("ranks stash by 3-week edge over the starter each would replace; proj_next3 remains as a tuning option", () => {
     const qb = candidate("qb", ["QB"], { proj: 19, next_proj: 19, next2_proj: 19 });
     const wr = candidate("wr", ["WR"], { proj: 9, next_proj: 9, next2_proj: 9 });
     const next3: Record<string, number> = { qb1: 60, fx: 20 };
-    expect(ids(waiverBuckets([qb, wr], options()).stash)).toEqual(["qb", "wr"]);
-    const edge = waiverBuckets([qb, wr], options({ tuning: { stashSort: "gain_next3" }, starterNext3: (id) => next3[id] ?? 0 }));
-    expect(ids(edge.stash)).toEqual(["wr", "qb"]);
+    const starterNext3 = (id: string) => next3[id] ?? 0;
+    expect(ids(waiverBuckets([qb, wr], options({ starterNext3 })).stash)).toEqual(["wr", "qb"]);
+    expect(stashGain({ proj_next3: 27, replaces: { slot: "FLEX", player_id: "fx", pts: 10 } }, starterNext3)).toBe(7);
+    expect(stashGain({ proj_next3: 27, replaces: { slot: "FLEX", player_id: "0", pts: 0 } }, starterNext3)).toBe(27);
+    expect(ids(waiverBuckets([qb, wr], options({ starterNext3, tuning: { stashSort: "proj_next3" } })).stash)).toEqual(["qb", "wr"]);
   });
 
   it("lists at most one K and one DEF in start_now, the best of each", () => {

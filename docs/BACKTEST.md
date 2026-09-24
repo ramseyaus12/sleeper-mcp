@@ -9,7 +9,7 @@ npx tsx scripts/backtest/fetch.ts   # once: 34 requests, cached under ~/.cache/s
 npx tsx scripts/backtest/run.ts     # no requests; writes reports/ in the same folder
 npx tsx scripts/backtest/run.ts --slots 1,5,10 --rivals off,on --long-absence off,on --draft-source week1 --week1-rank vor --end-week 17
 npx tsx scripts/backtest/proxy-check.ts --week 9 --count 15 --seed 9   # Out proxy sanity check
-npx tsx scripts/backtest/variants.ts                                   # stash default (V6) vs V7 and the earlier stash rule
+npx tsx scripts/backtest/variants.ts                                   # stash default (V7) vs V6, V8 and the earlier stash rule
 ```
 
 ## How the simulation works
@@ -24,9 +24,9 @@ npx tsx scripts/backtest/variants.ts                                   # stash d
 
 ## Report
 
-Generated with the current tool defaults, including the stash rule adopted from variant V6 (see "Stash default" below).
+Generated with the current tool defaults, including the stash rule adopted from variant V7 (see "Stash default: V7" below).
 
-Generated 2026-09-24T22:47:56.063Z. Decision weeks 3-14, rest of season through week 17. League: 231 Turtle Creek Goblins roster positions and scoring, 10 teams, QB/RB/WR/TE only (K and DEF left out). Draft source: week1 (vor); the same order stands in for search_rank. Advice only: your roster stays as drafted.
+Generated 2026-09-24T23:22:07.437Z. Decision weeks 3-14, rest of season through week 17. League: 231 Turtle Creek Goblins roster positions and scoring, 10 teams, QB/RB/WR/TE only (K and DEF left out). Draft source: week1 (vor); the same order stands in for search_rank. Advice only: your roster stays as drafted.
 
 **Read these results with these limits:**
 - 2025 projection rows carry timestamps from the Tuesday after each week, so projections likely include Sunday inactive news (docs/DATA_NOTES.md).
@@ -43,8 +43,8 @@ Columns: gains are your suggested player's actual points minus the other player'
 | Bucket | Horizon | n | = baseline | vs replaced 1w / 3w / ROS | wins 3w | vs baseline 1w / 3w / ROS | wins 3w |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | all | 313 | 56 | +7.5 / +14.8 / +29.0 | 76% | +0.2 / -1.3 / +0.7 | 42% |
-| stash | all | 180 | 19 | -1.7 / +0.7 / -6.4 | 52% | -1.8 / -2.2 / +12.2 | 42% |
-| drop | all | 15 | 2 | +10.6 / +35.4 / +50.6 | 93% | +2.5 / +18.2 / +31.4 | 67% |
+| stash | all | 180 | 10 | +2.9 / +13.0 / +22.7 | 83% | -3.2 / -3.3 / +0.6 | 45% |
+| drop | all | 11 | 2 | +10.3 / +36.3 / +47.6 | 100% | +5.4 / +20.7 / +28.4 | 73% |
 | bench_watch | all | 30 | 0 | - / - / - | - | - / - / - | - |
 
 By horizon:
@@ -53,16 +53,16 @@ By horizon:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | rest_of_season | 130 | 19 | +8.0 / +18.8 / +35.4 | 87% | +0.5 / -0.4 / +1.8 | 43% |
 | start_now | this_week | 183 | 37 | +7.1 / +11.9 / +24.4 | 68% | -0.0 / -2.0 / -0.1 | 40% |
-| stash | rest_of_season | 31 | 1 | -2.0 / -2.1 / +6.0 | 42% | +0.2 / -5.3 / +15.6 | 42% |
-| stash | short_term | 149 | 18 | -1.6 / +1.3 / -8.9 | 54% | -2.2 / -1.5 / +11.4 | 42% |
+| stash | rest_of_season | 55 | 2 | +2.2 / +14.7 / +27.4 | 85% | -4.6 / -4.7 / -1.9 | 45% |
+| stash | short_term | 125 | 8 | +3.2 / +12.2 / +20.6 | 82% | -2.6 / -2.7 / +1.7 | 45% |
 | drop | rest_of_season | 2 | 1 | +9.0 / +52.5 / +52.6 | 100% | -2.6 / +15.5 / +10.3 | 50% |
-| drop | short_term | 9 | 0 | +10.7 / +34.9 / +61.7 | 89% | +1.2 / +22.2 / +42.6 | 78% |
-| drop | this_week | 4 | 1 | +11.0 / +28.2 / +24.9 | 100% | +7.9 / +10.4 / +17.0 | 50% |
+| drop | short_term | 4 | 0 | +12.4 / +35.7 / +63.7 | 100% | +7.8 / +32.3 / +46.3 | 100% |
+| drop | this_week | 5 | 1 | +9.2 / +30.4 / +32.8 | 100% | +6.6 / +13.6 / +21.4 | 60% |
 
 Per slot (3-week gain vs replaced, n):
-- Slot 1: start_now +3.7 (94), stash -0.8 (60), ir_stash - (0), drop +40.9 (6), move_to_ir 0, bench_watch 16
-- Slot 5: start_now +25.7 (120), stash -3.8 (60), ir_stash - (0), drop +28.2 (7), move_to_ir 0, bench_watch 8
-- Slot 10: start_now +12.0 (99), stash +6.7 (60), ir_stash - (0), drop +44.5 (2), move_to_ir 0, bench_watch 6
+- Slot 1: start_now +3.7 (94), stash +17.2 (60), ir_stash - (0), drop +33.8 (6), move_to_ir 0, bench_watch 16
+- Slot 5: start_now +25.7 (120), stash +12.7 (60), ir_stash - (0), drop +35.9 (3), move_to_ir 0, bench_watch 8
+- Slot 10: start_now +12.0 (99), stash +9.0 (60), ir_stash - (0), drop +44.5 (2), move_to_ir 0, bench_watch 6
 - Proxy designations per week (mean): Out 133, IR 0
 
 ### Long absence off, rivals on (slots 1, 5, 10 combined)
@@ -70,8 +70,8 @@ Per slot (3-week gain vs replaced, n):
 | Bucket | Horizon | n | = baseline | vs replaced 1w / 3w / ROS | wins 3w | vs baseline 1w / 3w / ROS | wins 3w |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | all | 270 | 52 | +5.5 / +9.8 / +25.5 | 71% | -3.3 / -3.1 / -24.1 | 32% |
-| stash | all | 180 | 36 | -2.3 / -0.4 / +1.3 | 51% | -3.7 / +6.8 / +5.7 | 53% |
-| drop | all | 13 | 0 | +11.9 / +28.7 / +55.5 | 100% | +8.5 / +23.2 / +38.6 | 100% |
+| stash | all | 180 | 22 | +2.6 / +11.7 / +27.5 | 82% | -4.2 / +0.9 / -14.2 | 45% |
+| drop | all | 12 | 2 | +8.6 / +24.5 / +47.3 | 100% | +5.2 / +19.4 / +29.5 | 83% |
 | bench_watch | all | 30 | 0 | - / - / - | - | - / - / - | - |
 
 By horizon:
@@ -80,15 +80,16 @@ By horizon:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | rest_of_season | 98 | 15 | +6.5 / +10.8 / +26.7 | 72% | -2.7 / -2.6 / -27.8 | 33% |
 | start_now | this_week | 172 | 37 | +4.9 / +9.2 / +24.8 | 70% | -3.6 / -3.3 / -22.1 | 31% |
-| stash | rest_of_season | 41 | 1 | -2.5 / +0.8 / -6.3 | 54% | -2.1 / +7.3 / -17.2 | 61% |
-| stash | short_term | 139 | 35 | -2.3 / -0.7 / +3.6 | 50% | -4.2 / +6.7 / +12.5 | 50% |
-| drop | rest_of_season | 4 | 0 | +8.3 / +18.4 / +4.8 | 100% | +6.6 / +15.1 / +2.5 | 100% |
-| drop | short_term | 9 | 0 | +13.5 / +33.3 / +78.0 | 100% | +9.3 / +26.8 / +54.6 | 100% |
+| stash | rest_of_season | 52 | 0 | +1.7 / +11.4 / +15.5 | 83% | -3.7 / +2.8 / -23.9 | 56% |
+| stash | short_term | 128 | 22 | +3.0 / +11.8 / +32.4 | 81% | -4.3 / +0.1 / -10.3 | 41% |
+| drop | rest_of_season | 4 | 0 | +6.2 / +16.1 / +3.9 | 100% | +5.8 / +16.9 / +4.2 | 100% |
+| drop | short_term | 5 | 1 | +11.3 / +27.5 / +67.9 | 100% | +7.1 / +20.9 / +36.3 | 80% |
+| drop | this_week | 3 | 1 | +7.1 / +30.8 / +70.7 | 100% | +1.2 / +20.3 / +51.8 | 67% |
 
 Per slot (3-week gain vs replaced, n):
-- Slot 1: start_now -0.5 (65), stash +1.3 (60), ir_stash - (0), drop +34.9 (6), move_to_ir 0, bench_watch 16; rival claims 96
-- Slot 5: start_now +20.5 (120), stash -6.8 (60), ir_stash - (0), drop +21.5 (5), move_to_ir 0, bench_watch 8; rival claims 98
-- Slot 10: start_now +2.5 (85), stash +4.4 (60), ir_stash - (0), drop +28.4 (2), move_to_ir 0, bench_watch 6; rival claims 89
+- Slot 1: start_now -0.5 (65), stash +11.1 (60), ir_stash - (0), drop +33.0 (6), move_to_ir 0, bench_watch 16; rival claims 96
+- Slot 5: start_now +20.5 (120), stash +13.3 (60), ir_stash - (0), drop +16.9 (4), move_to_ir 0, bench_watch 8; rival claims 98
+- Slot 10: start_now +2.5 (85), stash +10.6 (60), ir_stash - (0), drop +14.4 (2), move_to_ir 0, bench_watch 6; rival claims 89
 - Proxy designations per week (mean): Out 133, IR 0
 
 ### Long absence on, rivals off (slots 1, 5, 10 combined)
@@ -96,9 +97,9 @@ Per slot (3-week gain vs replaced, n):
 | Bucket | Horizon | n | = baseline | vs replaced 1w / 3w / ROS | wins 3w | vs baseline 1w / 3w / ROS | wins 3w |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | all | 313 | 56 | +7.5 / +14.8 / +29.0 | 76% | +0.2 / -1.3 / +0.7 | 42% |
-| stash | all | 180 | 19 | -1.4 / +1.1 / -5.1 | 52% | -1.6 / -1.6 / +13.4 | 43% |
+| stash | all | 180 | 11 | +2.8 / +12.9 / +22.3 | 82% | -3.3 / -3.5 / +0.6 | 46% |
 | ir_stash | all | 60 | 0 | +2.7 / +14.3 / +48.7 | 70% | - / - / - | - |
-| drop | all | 15 | 2 | +10.2 / +35.1 / +50.0 | 93% | +2.1 / +17.8 / +30.7 | 60% |
+| drop | all | 11 | 2 | +9.9 / +37.4 / +48.9 | 100% | +4.9 / +21.8 / +29.7 | 73% |
 | move_to_ir | all | 14 | 0 | - / - / - | - | - / - / - | - |
 | bench_watch | all | 40 | 0 | - / - / - | - | - / - / - | - |
 
@@ -109,18 +110,19 @@ By horizon:
 | start_now | multi_week | 36 | 12 | +6.9 / +13.5 / +20.3 | 64% | -0.4 / -2.7 / -4.1 | 36% |
 | start_now | rest_of_season | 130 | 19 | +8.0 / +18.8 / +35.4 | 87% | +0.5 / -0.4 / +1.8 | 43% |
 | start_now | this_week | 147 | 25 | +7.1 / +11.5 / +25.4 | 69% | +0.1 / -1.8 / +0.9 | 41% |
-| stash | multi_week | 13 | 0 | +2.0 / +16.9 / +18.5 | 77% | +0.6 / +7.2 / +13.7 | 69% |
-| stash | rest_of_season | 32 | 1 | -2.1 / -1.7 / +5.9 | 44% | +0.1 / -4.7 / +16.6 | 44% |
-| stash | short_term | 135 | 18 | -1.6 / +0.2 / -10.0 | 52% | -2.3 / -1.7 / +12.6 | 40% |
+| stash | multi_week | 15 | 0 | +1.3 / +16.4 / +36.5 | 100% | -2.4 / +1.4 / +7.2 | 53% |
+| stash | rest_of_season | 58 | 2 | +2.3 / +14.6 / +27.6 | 86% | -5.0 / -5.5 / -2.9 | 45% |
+| stash | short_term | 107 | 9 | +3.3 / +11.5 / +17.5 | 78% | -2.4 / -3.1 / +1.7 | 45% |
 | ir_stash | after_return | 60 | 0 | +2.7 / +14.3 / +48.7 | 70% | - / - / - | - |
+| drop | multi_week | 1 | 0 | -2.8 / +50.5 / +78.3 | 100% | -3.3 / +37.9 / +53.4 | 100% |
 | drop | rest_of_season | 2 | 1 | +9.0 / +52.5 / +52.6 | 100% | -2.6 / +15.5 / +10.3 | 50% |
-| drop | short_term | 9 | 0 | +10.0 / +34.2 / +60.5 | 89% | +0.5 / +21.5 / +41.4 | 67% |
+| drop | short_term | 4 | 0 | +12.4 / +35.7 / +63.7 | 100% | +7.8 / +32.3 / +46.3 | 100% |
 | drop | this_week | 4 | 1 | +11.0 / +28.2 / +24.9 | 100% | +7.9 / +10.4 / +17.0 | 50% |
 
 Per slot (3-week gain vs replaced, n):
-- Slot 1: start_now +3.7 (94), stash -0.4 (60), ir_stash +14.3 (20), drop +40.9 (6), move_to_ir 2, bench_watch 16
-- Slot 5: start_now +25.7 (120), stash -3.8 (60), ir_stash +14.3 (20), drop +27.4 (7), move_to_ir 3, bench_watch 8
-- Slot 10: start_now +12.0 (99), stash +7.5 (60), ir_stash +14.3 (20), drop +44.5 (2), move_to_ir 9, bench_watch 16
+- Slot 1: start_now +3.7 (94), stash +18.4 (60), ir_stash +14.3 (20), drop +35.7 (6), move_to_ir 2, bench_watch 16
+- Slot 5: start_now +25.7 (120), stash +12.0 (60), ir_stash +14.3 (20), drop +35.9 (3), move_to_ir 3, bench_watch 8
+- Slot 10: start_now +12.0 (99), stash +8.4 (60), ir_stash +14.3 (20), drop +44.5 (2), move_to_ir 9, bench_watch 16
 - ir_stash (vs an empty IR slot): 60 suggestions, mean points through week 17 48.7, mean weeks played after the suggestion 4.8, played at least once 85%
 - Proxy designations per week (mean): Out 44, IR 89
 
@@ -129,9 +131,9 @@ Per slot (3-week gain vs replaced, n):
 | Bucket | Horizon | n | = baseline | vs replaced 1w / 3w / ROS | wins 3w | vs baseline 1w / 3w / ROS | wins 3w |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | start_now | all | 270 | 52 | +5.5 / +9.8 / +25.5 | 71% | -3.3 / -3.1 / -24.1 | 32% |
-| stash | all | 180 | 19 | -1.9 / -2.0 / -4.0 | 46% | -2.7 / +6.4 / +1.9 | 54% |
+| stash | all | 180 | 8 | +1.4 / +8.5 / +20.4 | 77% | -4.7 / -1.3 / -22.3 | 44% |
 | ir_stash | all | 96 | 0 | +3.9 / +15.9 / +67.9 | 54% | - / - / - | - |
-| drop | all | 10 | 0 | +10.4 / +34.0 / +54.8 | 100% | +6.3 / +27.2 / +31.4 | 90% |
+| drop | all | 10 | 1 | +5.5 / +18.4 / +40.5 | 100% | +1.4 / +11.6 / +17.2 | 80% |
 | move_to_ir | all | 14 | 0 | - / - / - | - | - / - / - | - |
 | bench_watch | all | 40 | 0 | - / - / - | - | - / - / - | - |
 
@@ -142,19 +144,18 @@ By horizon:
 | start_now | multi_week | 19 | 1 | +4.5 / +5.9 / +1.4 | 58% | -3.3 / -8.3 / -51.2 | 21% |
 | start_now | rest_of_season | 98 | 15 | +6.5 / +10.8 / +26.7 | 72% | -2.7 / -2.6 / -27.8 | 33% |
 | start_now | this_week | 153 | 36 | +5.0 / +9.6 / +27.8 | 71% | -3.6 / -2.7 / -18.4 | 33% |
-| stash | multi_week | 6 | 0 | -7.7 / -15.0 / -20.8 | 17% | -1.5 / -9.4 / -34.3 | 33% |
-| stash | rest_of_season | 70 | 2 | -2.0 / -1.8 / -8.7 | 47% | -1.1 / +6.9 / -8.8 | 61% |
-| stash | short_term | 104 | 17 | -1.5 / -1.3 / +0.1 | 47% | -3.8 / +7.1 / +11.2 | 51% |
+| stash | multi_week | 12 | 1 | -2.8 / +5.8 / +13.0 | 67% | -5.3 / -6.5 / -27.9 | 25% |
+| stash | rest_of_season | 65 | 0 | +1.5 / +11.1 / +18.6 | 82% | -4.4 / +2.1 / -20.9 | 55% |
+| stash | short_term | 103 | 7 | +1.8 / +7.2 / +22.4 | 76% | -4.8 / -2.9 / -22.5 | 40% |
 | ir_stash | after_return | 96 | 0 | +3.9 / +15.9 / +67.9 | 54% | - / - / - | - |
-| drop | multi_week | 1 | 0 | +13.9 / +28.2 / +28.6 | 100% | +7.2 / -2.4 / -12.1 | 0% |
-| drop | rest_of_season | 4 | 0 | +8.3 / +18.4 / +4.8 | 100% | +6.6 / +15.1 / +2.5 | 100% |
-| drop | short_term | 4 | 0 | +11.7 / +44.9 / +97.1 | 100% | +7.6 / +45.9 / +61.0 | 100% |
-| drop | this_week | 1 | 0 | +10.2 / +58.5 / +111.3 | 100% | -1.3 / +29.9 / +72.3 | 100% |
+| drop | rest_of_season | 5 | 0 | +4.6 / +14.7 / +9.6 | 100% | +2.9 / +9.3 / +1.7 | 80% |
+| drop | short_term | 2 | 0 | +5.3 / +9.1 / +72.5 | 100% | -2.2 / +4.2 / +4.0 | 100% |
+| drop | this_week | 3 | 1 | +7.1 / +30.8 / +70.7 | 100% | +1.2 / +20.3 / +51.8 | 67% |
 
 Per slot (3-week gain vs replaced, n):
-- Slot 1: start_now -0.5 (65), stash +0.1 (60), ir_stash +15.3 (32), drop +42.4 (6), move_to_ir 2, bench_watch 16; rival claims 96
-- Slot 5: start_now +20.5 (120), stash -8.8 (60), ir_stash +14.8 (32), drop +14.5 (2), move_to_ir 3, bench_watch 8; rival claims 98
-- Slot 10: start_now +2.5 (85), stash +2.8 (60), ir_stash +17.6 (32), drop +28.4 (2), move_to_ir 9, bench_watch 16; rival claims 89
+- Slot 1: start_now -0.5 (65), stash +8.0 (60), ir_stash +15.3 (32), drop +21.3 (6), move_to_ir 2, bench_watch 16; rival claims 96
+- Slot 5: start_now +20.5 (120), stash +10.8 (60), ir_stash +14.8 (32), drop +14.0 (2), move_to_ir 3, bench_watch 8; rival claims 98
+- Slot 10: start_now +2.5 (85), stash +6.7 (60), ir_stash +17.6 (32), drop +14.4 (2), move_to_ir 9, bench_watch 16; rival claims 89
 - ir_stash (vs an empty IR slot): 96 suggestions, mean points through week 17 67.9, mean weeks played after the suggestion 5.1, played at least once 81%
 - Proxy designations per week (mean): Out 44, IR 89
 
@@ -265,7 +266,9 @@ Per combination (stash per week; gain 3w / ROS vs baseline):
 
 73% of V6's picks have the this_week horizon. Most of those have no injury opportunity or usage signal behind them, so their horizon_reason is the start_now fallback text ("Streamer: a projection edge for this week only"), which does not describe a stash. That text would need changing if V6 became the default.
 
-## Stash default
+## Earlier stash default: V6
+
+This section describes the default from commit 9648cc9 until V7 replaced it (see "Stash default: V7").
 
 V6 became the stash default: any pool player not in start_now who passes the projection floor, ranked by proj_next3, at most `THRESHOLDS.stashLimit` (5), with no injury opportunity or usage label required. The "stash horizon must not be this_week" rule was removed, and stash entries without a longer signal now get the `short_term` horizon.
 
@@ -400,4 +403,54 @@ Per combination (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):
 - V8 lands between V6 and V7 on "vs replaced": +4.5 over 3 weeks and +4.5 rest of season (V7: +11.5 and +23.2; V6: -0.1 and -3.5).
 - V8 has the best 3-week "vs baseline" gain of the three: +5.1 (V6 +2.4, V7 -1.8). Over the rest of the season it is +5.0, behind V6 (+8.3). Its picks match the baseline player most often (18%; V6 13%, V7 7%).
 - The replay covers QB, RB, WR and TE only, so one per position caps V8 at 4 stashes a week and makes its mix exactly 25% per position. That means one backup QB every week, even in this 1-QB league. With K and DEF in the pool, the live tool could list 5.
+
+## Stash default: V7
+
+The choice between V7 and V8 followed a rule set before the change: V8 would become the default if its 3-week "vs replaced" gain was within 2 points of V7's and its 3-week "vs baseline" gain was at least 0; otherwise V7. V8's 3-week "vs replaced" gain (+4.5) is 7.0 points below V7's (+11.5), so V7 became the default: any pool player not in start_now who passes the projection floor, ranked by `proj_next3` minus the 3-week projection of the starter he would replace, at most `THRESHOLDS.stashLimit` (5). The earlier ranking is still available as `stashSort: "proj_next3"` in `WaiverTuning`.
+
+**Confirmation.** With the new default, `npx tsx scripts/backtest/variants.ts` reproduces V7 exactly: the combined figures below match the V7 rows above, and all 12 per-combination rows match the V7 run. The Report section at the top was regenerated with `run.ts` under this default. The stash rows changed; the start_now rows did not. The drop rows changed too, because drops take their replacements from start_now and stash.
+
+What V7 gives up: against the best free agent at the same position it is behind V6 (-1.8 vs +2.4 over 3 weeks, -8.8 vs +8.3 rest of season). Its picks fill positions where the team's starter is weakest, but they are not always the best player available at that position.
+
+Stash vs the baseline free agent (highest week-N-projected at the same position), all 12 combinations combined.
+'Beats current' counts combinations where the variant's mean gain over the baseline is higher than today's stash; a combination with no stash entries does not count as a win.
+
+| Variant | Rule | stash per week | = baseline | gain 3w | gain ROS | wins 3w | beats current 3w | beats current ROS | beats on both |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current | default (V7): projection floor only, rank by proj_next3 minus the replaced starter's 3-week projection, limit 5 | 5.0 | 7% | -1.8 | -8.8 | 45% | - | - | - |
+| V6 | projection floor only, rank by proj_next3, limit 5 | 5.0 | 13% | +2.4 | +8.3 | 48% | 8/12 | 12/12 | 8/12 |
+| V8 | V7's ranking, at most one stash per position, then the top 5 | 4.0 | 18% | +5.1 | +5.0 | 52% | 12/12 | 12/12 | 12/12 ★ |
+| signal | injury opportunity or rising/breakout required, rank by stashScore, limit 10 | 10.0 | 1% | -13.8 | -39.6 | 25% | 1/12 | 0/12 | 0/12 |
+
+Stash vs the starter each pick would replace and vs the baseline free agent, all 12 combinations combined, with the position mix of the picks:
+
+| Variant | vs replaced 3w | vs replaced ROS | wins 3w | vs baseline 3w | vs baseline ROS | wins 3w | = baseline | positions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current | +11.5 | +23.2 | 81% | -1.8 | -8.8 | 45% | 7% | RB 39%, TE 32%, WR 16%, QB 12% |
+| V6 | -0.1 | -3.5 | 50% | +2.4 | +8.3 | 48% | 13% | QB 61%, WR 23%, RB 10%, TE 7% |
+| V8 | +4.5 | +4.5 | 61% | +5.1 | +5.0 | 52% | 18% | TE 25%, RB 25%, WR 25%, QB 25% |
+| signal | -13.0 | -32.7 | 24% | -13.8 | -39.6 | 25% | 1% | RB 41%, WR 33%, TE 21%, QB 5% |
+
+V6 beats the default in: vs replaced 3w 0/12, ROS 2/12; vs baseline 3w 8/12, ROS 12/12.
+
+V8 beats the default in: vs replaced 3w 0/12, ROS 0/12; vs baseline 3w 12/12, ROS 12/12.
+
+Per combination (vs replaced 3w / ROS; vs baseline 3w / ROS; positions):
+
+| Combination | current | V6 | V8 |
+| --- | --- | --- | --- |
+| slot 1, rivals off, long absence off | +17.2 / +23.5; +5.3 / +3.5; TE 48%, RB 22%, QB 18%, WR 12% | -0.8 / +11.3; -0.1 / +17.5; QB 87%, RB 10%, WR 3% | +7.2 / +13.7; +6.4 / +10.5; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals off, long absence off | +12.7 / +35.0; -9.8 / -1.8; RB 67%, TE 22%, QB 10%, WR 2% | -3.8 / -41.4; -4.2 / +7.7; QB 82%, WR 17%, RB 2% | +6.1 / +2.6; +3.0 / +5.9; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals off, long absence off | +9.0 / +9.5; -5.4 / +0.1; WR 28%, RB 28%, QB 25%, TE 18% | +6.7 / +11.0; -2.2 / +11.3; QB 92%, RB 7%, TE 2% | +6.7 / -0.5; -0.1 / +5.0; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals on, long absence off | +11.1 / +23.2; +3.1 / -15.6; TE 63%, WR 17%, RB 12%, QB 8% | +1.3 / +18.4; +7.0 / -1.5; QB 38%, WR 37%, RB 18%, TE 7% | +4.0 / +17.8; +10.5 / +9.5; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals on, long absence off | +13.3 / +46.9; -6.6 / -27.9; RB 80%, TE 15%, QB 5% | -6.8 / -17.8; +9.1 / +16.0; QB 38%, WR 38%, TE 20%, RB 3% | +0.8 / +2.0; +8.6 / +8.7; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals on, long absence off | +10.6 / +12.4; +6.0 / +0.9; WR 35%, TE 28%, RB 27%, QB 10% | +4.4 / +3.4; +4.4 / +2.7; QB 50%, WR 28%, RB 13%, TE 8% | +6.8 / +6.4; +7.1 / +5.3; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals off, long absence on | +18.4 / +26.1; +5.5 / +5.4; TE 45%, RB 22%, QB 20%, WR 13% | -0.4 / +11.8; +0.6 / +19.0; QB 83%, RB 12%, WR 5% | +7.5 / +14.1; +6.7 / +11.0; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals off, long absence on | +12.0 / +31.2; -10.3 / -5.0; RB 65%, TE 23%, QB 10%, WR 2% | -3.8 / -40.7; -4.2 / +8.4; QB 80%, WR 18%, RB 2% | +6.1 / +2.2; +3.0 / +5.5; RB 25%, TE 25%, QB 25%, WR 25% |
+| slot 10, rivals off, long absence on | +8.4 / +9.7; -5.7 / +1.6; RB 28%, QB 27%, WR 27%, TE 18% | +7.5 / +13.5; -1.1 / +12.9; QB 88%, RB 10%, TE 2% | +6.5 / -0.8; -0.2 / +4.7; QB 25%, TE 25%, RB 25%, WR 25% |
+| slot 1, rivals on, long absence on | +8.0 / +17.8; +1.9 / -23.1; TE 62%, WR 20%, RB 13%, QB 5% | +0.1 / +14.8; +6.3 / -6.4; WR 45%, RB 25%, QB 23%, TE 7% | -0.1 / +4.4; +6.4 / -4.0; TE 25%, RB 25%, WR 25%, QB 25% |
+| slot 5, rivals on, long absence on | +10.8 / +41.8; -8.9 / -34.0; RB 83%, TE 15%, QB 2% | -8.8 / -20.4; +10.0 / +15.8; WR 48%, QB 27%, TE 23%, RB 2% | -1.3 / -5.8; +5.5 / +0.8; RB 26%, TE 26%, WR 26%, QB 23% |
+| slot 10, rivals on, long absence on | +6.7 / +1.6; +3.1 / -9.8; WR 42%, TE 28%, RB 23%, QB 7% | +2.8 / -6.5; +3.0 / -3.7; QB 40%, WR 33%, RB 17%, TE 10% | +3.9 / -1.8; +4.2 / -2.9; QB 25%, TE 25%, RB 25%, WR 25% |
+
+Current stash horizons (720 picks): short_term 463 (64%), rest_of_season 230 (32%), multi_week 27 (4%)
 

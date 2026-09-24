@@ -36,8 +36,8 @@ export interface WaiverTuning {
   /** With stashRequireSignal: played weeks a usage trend needs before its label qualifies (default 0). */
   stashMinPlayedWeeks?: number;
   /**
-   * stash order: proj_next3 (default), stashScore, or gain_next3: proj_next3 minus the 3-week projection
-   * of the starter the candidate would replace (the weakest eligible starter, as in startGain).
+   * stash order: gain_next3 (default: proj_next3 minus the 3-week projection of the starter the candidate
+   * would replace, the weakest eligible starter as in startGain), proj_next3, or stashScore.
    */
   stashSort?: "score" | "proj_next3" | "gain_next3";
   /** Most stash entries per position (a player's first fantasy position), applied after sorting (default no cap). */
@@ -158,8 +158,8 @@ export interface BucketOptions {
   limit: number;
   /** Target week, for the bye-week reason. */
   week: number;
-  /** 3-week projection of a player in the optimal lineup, for stashSort "gain_next3". */
-  starterNext3?: (playerId: string) => number;
+  /** 3-week projection of a player in the optimal lineup, which stash ranking subtracts. */
+  starterNext3: (playerId: string) => number;
   tuning?: WaiverTuning;
 }
 
@@ -253,7 +253,8 @@ export function stashScore(candidate: CandidateInput): number {
  *   projection only.
  * - stash: any other candidate whose higher of this week's and next week's projection is at least
  *   THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
- *   by proj_next3, at most THRESHOLDS.stashLimit. No injury opportunity or usage label is needed.
+ *   by proj_next3 minus that starter's projection over the same 3 weeks, at most THRESHOLDS.stashLimit.
+ *   No injury opportunity or usage label is needed.
  */
 export function waiverBuckets(candidates: readonly CandidateInput[], options: BucketOptions): WaiverBuckets {
   const { optimalLineup, irSlots, nameOf, limit, week, tuning } = options;
@@ -292,11 +293,10 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     kickerDefenseCount.set(position, count);
     return count <= t.startNowKDefLimit;
   });
-  if (tuning?.stashSort === "score") stash.sort((a, b) => stashScore(b) - stashScore(a));
-  else if (tuning?.stashSort === "gain_next3") {
-    const replacedNext3 = (e: WaiverEntry) => (e.replaces && e.replaces.player_id !== "0" ? (options.starterNext3?.(e.replaces.player_id) ?? 0) : 0);
-    stash.sort((a, b) => b.proj_next3 - replacedNext3(b) - (a.proj_next3 - replacedNext3(a)));
-  } else stash.sort((a, b) => b.proj_next3 - a.proj_next3);
+  const stashSort = tuning?.stashSort ?? "gain_next3";
+  if (stashSort === "score") stash.sort((a, b) => stashScore(b) - stashScore(a));
+  else if (stashSort === "proj_next3") stash.sort((a, b) => b.proj_next3 - a.proj_next3);
+  else stash.sort((a, b) => stashGain(b, options.starterNext3) - stashGain(a, options.starterNext3));
   const perPosition = new Map<string, number>();
   const stashListed = stash.filter((e) => {
     if (tuning?.stashPerPosition === undefined) return true;
@@ -311,6 +311,12 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     stash: stashListed.slice(0, Math.min(limit, t.stashLimit)),
     ir_stash: irStash.slice(0, t.irStashLimit),
   };
+}
+
+/** proj_next3 minus the 3-week projection of the starter the entry would replace (0 for an empty slot). */
+export function stashGain(entry: Pick<WaiverEntry, "proj_next3" | "replaces">, starterNext3: (playerId: string) => number): number {
+  const replaced = entry.replaces && entry.replaces.player_id !== "0" ? starterNext3(entry.replaces.player_id) : 0;
+  return round2(entry.proj_next3 - replaced);
 }
 
 /** Projection over the target week and the next two, counting unknown weeks as 0. */
