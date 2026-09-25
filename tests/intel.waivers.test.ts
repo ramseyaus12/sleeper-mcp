@@ -213,6 +213,16 @@ describe("waiverBuckets", () => {
     expect(stash[1]!.reasons).toContain("TE Travis Kelce (Out, knee) vacates 25% target share; next on the depth chart, target share +22.5 pts in weeks he missed");
   });
 
+  it("never stashes a K or DEF, even with the highest 3-week edge over the starter it would replace", () => {
+    // k1 projects 7 a week (21 over 3 weeks); te1 8 a week (24).
+    const kicker = candidate("k", ["K"], { proj: 6, next_proj: 9, next2_proj: 9 }); // 24 - 21 = +3
+    const defense = candidate("d", ["DEF"], { proj: 5, next_proj: 9, next2_proj: 9 }); // 23 - 18 = +5
+    const te = candidate("te", ["TE"], { proj: 7, next_proj: 7, next2_proj: 7 }); // 21 - 24 = -3
+    const { start_now, stash } = waiverBuckets([kicker, defense, te], options());
+    expect(start_now).toEqual([]);
+    expect(ids(stash)).toEqual(["te"]);
+  });
+
   it("keeps at most stashLimit stash entries, best 3-week edge first", () => {
     const pool = [9, 14, 6, 11, 20, 7, 12].map((next3, i) => candidate(`p${i}`, ["WR"], { proj: 4, next_proj: next3 - 4, next2_proj: 0 }));
     const { stash } = waiverBuckets(pool, options());

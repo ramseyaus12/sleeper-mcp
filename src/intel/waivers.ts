@@ -23,6 +23,9 @@ export const IR_ELIGIBLE: ReadonlySet<string> = new Set(["IR", "PUP"]);
 
 const TEAM_DEFENSE = /^[A-Z]{2,3}$/;
 
+/** Positions streamed week to week through start_now and never stashed. The 2025 backtest did not cover them. */
+const STREAM_ONLY: ReadonlySet<string> = new Set(["K", "DEF"]);
+
 export type WaiverThresholds = { [K in keyof typeof THRESHOLDS]: number };
 
 /** Overrides for experiments such as the backtest. Every field defaults to the tool's behavior. */
@@ -269,7 +272,7 @@ export function stashScore(candidate: CandidateInput): number {
  * - stash: any other candidate whose higher of this week's and next week's projection is above 0 and at
  *   least THRESHOLDS.stashProjShare of the weakest starter it could replace (so a player on bye can qualify);
  *   by proj_next3 minus that starter's projection over the same 3 weeks, at most THRESHOLDS.stashLimit.
- *   No injury opportunity or usage label is needed.
+ *   No injury opportunity or usage label is needed. K and DEF never go to stash.
  */
 export function waiverBuckets(candidates: readonly CandidateInput[], options: BucketOptions): WaiverBuckets {
   const { optimalLineup, irSlots, nameOf, limit, week, tuning } = options;
@@ -298,12 +301,13 @@ export function waiverBuckets(candidates: readonly CandidateInput[], options: Bu
     const risingUsage = candidate.trend !== null && stashLabels.includes(candidate.trend.label) && candidate.trend.played_weeks >= stashMinPlayedWeeks;
     const floorProj = Math.max(candidate.proj, candidate.next_proj ?? 0);
     const signal = tuning?.stashRequireSignal ? Boolean(candidate.opportunity || risingUsage) : true;
-    if (signal && fit && floorProj > 0 && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
+    const streamOnly = candidate.positions.length > 0 && candidate.positions.every((p) => STREAM_ONLY.has(p));
+    if (signal && !streamOnly && fit && floorProj > 0 && floorProj >= t.stashProjShare * fit.replaces.pts) stash.push(entry("stash"));
   }
   startNow.sort((a, b) => (b.start_gain ?? 0) - (a.start_gain ?? 0));
   const kickerDefenseCount = new Map<string, number>();
   const startNowListed = startNow.filter((e) => {
-    const position = e.positions.find((p) => p === "K" || p === "DEF");
+    const position = e.positions.find((p) => STREAM_ONLY.has(p));
     if (!position) return true;
     const count = (kickerDefenseCount.get(position) ?? 0) + 1;
     kickerDefenseCount.set(position, count);
