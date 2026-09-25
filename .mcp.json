@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sleeper": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["scripts/mcp-cloud.sh"],
+      "env": {
+        "SLEEPER_MCP_READ_ONLY": "1",
+        "NODE_USE_ENV_PROXY": "1",
+        "SLEEPER_USERNAME": "${SLEEPER_USERNAME:-}"
+      }
+    }
+  }
+}
