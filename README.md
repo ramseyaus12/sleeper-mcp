@@ -167,6 +167,27 @@ Every tool that takes a team accepts any of `username` (or display name), `user_
 | `get_player_stats` | Actual weekly/season fantasy production with the same filters and scoring options. |
 | `get_lineup_projections` | Start/sit for one team: current vs optimal lineup (respecting FLEX/SUPER_FLEX/IDP eligibility), suggested swaps, bye/injury/empty-slot warnings. |
 
+### Fantasy intel
+
+Usage from Sleeper's weekly stat rows, injury designations and news from ESPN's public endpoints. Time-sensitive fields (status, news) carry `source` and `as_of`. If ESPN cannot be reached, statuses fall back to Sleeper's and the response says so.
+
+| Tool | What it returns |
+| --- | --- |
+| `get_lineup_report` | `get_lineup_projections`' output unchanged (the optimal lineup is by projection only), plus for each starter and the 5 highest-projected bench players not on IR or taxi: merged injury status, ESPN player updates from the last 72 hours, usage trend label with played weeks, and `flags` (designation with ESPN's note, ESPN/Sleeper disagreement, no projection, falling usage, bench player out-projecting a starter). Flags come from structured data only. |
+| `get_waiver_targets` | `start_now` (free agents projected to beat one of your starters this week), `stash` (largest 3-week projected edge over the starter each would replace), `ir_stash` (injured players for an open IR slot), `drop_candidates` (each with a better replacement, or an IR move) and `bench_watch`. Every pickup has a 3-week projection, a `horizon` for how long it should help, and plain-language `reasons`. |
+| `get_injury_report` | Current designations for QB/RB/WR/TE, ESPN's feed merged with Sleeper's. Filter by NFL teams, positions or one league roster. Lists ESPN entries that could not be linked to Sleeper. |
+| `get_player_news` | ESPN fantasy updates for chosen players or a roster within `hours` (default 72), separated from multi-player articles that only mention them. |
+| `get_player_trends` | Week-by-week snap, target, carry, red zone and air yards share of the team, missed weeks, and a trend label (rising, falling, steady, breakout, insufficient). |
+| `get_team_usage` | How one NFL offense splits that volume, with each player's trend, plus volume vacated by injured starters and the teammates in line to absorb it. |
+
+How far to trust `get_waiver_targets`, from a replay of the 2025 season ([docs/BACKTEST.md](docs/BACKTEST.md)):
+
+- `start_now` pickups beat the starter they replace, and roughly tie the top-projected free agent when other managers don't claim players and trail it when they do.
+- `stash` picks beat the starter they would replace in the 2025 backtest, but that result is weak evidence because the backtest's future-week projections contained later injury news. The stash rule is chosen mainly because it avoids stashing players the team cannot start.
+- Drop suggestions are rare and outscored the dropped player, but roughly tie the best free agent at the position.
+- `ir_stash` adds points in an otherwise empty IR slot.
+- Injury status in the replay was a snap-based stand-in, so injury-driven advice is the least tested.
+
 ### Account tools (optional, session)
 
 Registered only when a Sleeper session is configured (`SLEEPER_TOKEN`, or `SLEEPER_EMAIL` + `SLEEPER_PASSWORD`). They talk to Sleeper's **private GraphQL API** (`https://sleeper.com/graphql`), the same one the web app uses. Every tool that changes the account takes `dry_run=true` to validate and preview first, resolves player names for you, and re-reads the roster afterwards so you see the result. "My team" is the roster owned by the logged-in user; pass `roster_id` to act on another one (co-owners/commissioners).
@@ -193,8 +214,9 @@ Write tools carry `readOnlyHint: false` so clients can ask for confirmation. Sta
 
 ### Prompts
 
-- `weekly_briefing(league_id, username, week?)` — matchup preview, lineup check, waiver targets, league news.
-- `waiver_wire_report(league_id, username)` — prioritized claims with drop candidates and FAAB suggestions.
+- `weekly_briefing(league_id, username, week?)` — matchup preview, lineup check (`get_lineup_report`), waiver targets (`get_waiver_targets`), league news.
+- `waiver_wire_report(league_id, username)` — prioritized claims from `get_waiver_targets`, checked against `get_player_news`, with drops, FAAB suggestions and each pick's horizon.
+- `gameday_check(league_id, username)` — starters at risk of sitting (`get_injury_report` + `get_lineup_report`) and the best legal swap for each.
 - `trade_analysis(league_id, team_a, team_b, proposal)` — needs, lineup impact, depth, dynasty value, verdict.
 
 ### Resources
@@ -223,6 +245,9 @@ CLI flags: `--http`, `--port <n>`, `--host <addr>`, `--user <name>`, `--read-onl
 - **Caching & rate limits.** Every endpoint is cached with a TTL matched to how fast it changes (20 s for live matchups, 5 min for league lists, 24 h for players). Concurrent identical requests are de-duplicated. Outbound calls are capped at 600/min (Sleeper asks for < 1000) and retried with backoff on 429/5xx.
 - **Payload design.** Responses use short keys where they repeat hundreds of times (`{id, name, pos, team, inj, pts}`) and drop empty fields, which keeps token usage down for large leagues.
 - **Projections/stats.** These use Sleeper's `/projections` and `/stats` endpoints, which power the Sleeper app but are not in the public docs. They have been stable for years; if they change, the rest of the server is unaffected.
+- **Usage.** Snap, target, carry, red zone and air yards shares come from `api.sleeper.com/stats` rows, which carry the team a player played for that week. A week counts as played only with an offensive snap.
+- **ESPN.** Injury designations and player news come from ESPN's undocumented `site.api.espn.com` endpoints (no key). ESPN ids are linked to Sleeper from ESPN's team rosters by name and team, because Sleeper's `espn_id` is set for only about a quarter of players. Responses are cached (injuries 10 min, news 20 min, rosters 24 h) and requests are capped at 120/min.
+- **Backtest.** `scripts/backtest/` replays `get_waiver_targets` over the 2025 season with no live requests after a one-time fetch; results and method are in [docs/BACKTEST.md](docs/BACKTEST.md).
 
 ## Development
 

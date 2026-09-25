@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { EspnClient } from "../src/espn/client.js";
 import { SleeperClient, SLEEPER_API_BASE } from "../src/sleeper/client.js";
 import { PlayerStore } from "../src/sleeper/players.js";
 import { createServer } from "../src/server.js";
@@ -9,7 +10,7 @@ import { routes } from "./fixtures.js";
 export interface FakeFetch {
   fetch: typeof fetch;
   calls: string[];
-  /** Override a route (path relative to the API base, including query string if any). */
+  /** Override a route: a path relative to the Sleeper v1 base (query string included), or a full URL for other hosts. */
   set: (path: string, body: unknown | ((n: number) => { status: number; body?: unknown })) => void;
 }
 
@@ -45,12 +46,17 @@ export function testClient(ff: FakeFetch = fakeFetch()): SleeperClient {
   return new SleeperClient({ fetch: ff.fetch, sleep: async () => {}, maxRetries: 2 });
 }
 
+export function testEspnClient(ff: FakeFetch = fakeFetch()): EspnClient {
+  return new EspnClient({ fetch: ff.fetch, sleep: async () => {}, maxRetries: 2 });
+}
+
 /** Full server + MCP client wired over an in-memory transport. */
 export async function connectedClient(overrides: Record<string, unknown> = {}, options: Partial<import("../src/server.js").CreateServerOptions> = {}) {
   const ff = fakeFetch(overrides);
   const sleeper = testClient(ff);
   const players = new PlayerStore(sleeper, { cacheDir: null });
-  const { server, ctx } = createServer({ client: sleeper, players, log: () => {}, preloadPlayers: false, ...options });
+  const espn = testEspnClient(ff);
+  const { server, ctx } = createServer({ client: sleeper, players, espn, log: () => {}, preloadPlayers: false, ...options });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test-client", version: "0.0.0" });

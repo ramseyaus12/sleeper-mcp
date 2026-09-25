@@ -276,3 +276,27 @@ export interface TrendingPlayer {
 /** Stat line as returned by the (undocumented) stats/projections endpoints. */
 export type StatLine = Record<string, number | null | undefined>;
 export type StatMap = Record<string, StatLine | null>;
+
+/** Player summary embedded in an api.sleeper.com stat or projection row. */
+export interface StatRowPlayer {
+  position?: string | null;
+  /** What the `position[]` filter matches on (fullbacks carry ["RB"]). */
+  fantasy_positions?: string[] | null;
+  [key: string]: unknown;
+}
+
+/**
+ * One player-week from api.sleeper.com/stats or /projections. Fields not recorded in
+ * docs/DATA_NOTES.md stay untyped. Missing stat fields mean 0.
+ */
+export interface StatRow {
+  player_id: string;
+  /** Team the player was on that week. Absent or null on projection rows for players without a game. */
+  team?: string | null;
+  opponent?: string | null;
+  game_id?: string | null;
+  date?: string | null;
+  stats?: StatLine;
+  player?: StatRowPlayer;
+  [key: string]: unknown;
+}

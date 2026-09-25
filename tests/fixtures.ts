@@ -13,6 +13,7 @@ import type {
   Roster,
   SleeperUser,
   StatMap,
+  StatRow,
   TradedPick,
   Transaction,
   TrendingPlayer,
@@ -63,7 +64,7 @@ export const players: PlayerMap = {
   "11004": p("11004", "Retired", "Ron", "WR", null, { search_rank: 9999999, status: "Inactive", active: false }),
 };
 
-function p(id: string, first: string, last: string, pos: string, team: string | null, extra: Partial<PlayerMap[string]> = {}): PlayerMap[string] {
+export function p(id: string, first: string, last: string, pos: string, team: string | null, extra: Partial<PlayerMap[string]> = {}): PlayerMap[string] {
   return {
     player_id: id,
     first_name: first,
@@ -308,6 +309,205 @@ export const statsWeek4: StatMap = {
   "9226": { pts_ppr: 22.3, pts_half_ppr: 20.3, pts_std: 18.3, rush_yd: 103, rush_td: 1, rec: 4, rec_yd: 40, gp: 1 },
 };
 
+/** Full URLs for routes on hosts other than api.sleeper.app/v1. Written out so tests catch URL mistakes in the clients. */
+export const STAT_ROWS_WEEK4_URL = "https://api.sleeper.com/stats/nfl/2026/4?season_type=regular&position[]=QB&position[]=RB&position[]=TE&position[]=WR";
+export const PROJECTION_ROWS_WEEK5_URL = "https://api.sleeper.com/projections/nfl/2026/5?season_type=regular&position[]=RB";
+export const ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries";
+export const ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams";
+export const ESPN_ROSTER_IND_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/11/roster";
+export const ESPN_NEWS_TAYLOR_URL = "https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId=4242335&limit=5";
+
+/** api.sleeper.com stat rows: a played QB, a played RB, and a dressed-but-idle RB. */
+export const statRowsWeek4: StatRow[] = [
+  {
+    player_id: "4046",
+    team: "KC",
+    opponent: "LV",
+    game_id: "202600401",
+    date: "2026-10-04",
+    stats: { off_snp: 68, tm_off_snp: 68, pass_att: 38, rush_att: 4, gms_active: 1, gp: 1, pts_ppr: 24.1 },
+    player: { position: "QB", fantasy_positions: ["QB"] },
+  },
+  {
+    player_id: "9226",
+    team: "ATL",
+    opponent: "TB",
+    game_id: "202600402",
+    date: "2026-10-04",
+    stats: { off_snp: 55, tm_off_snp: 64, rush_att: 21, rush_rz_att: 4, rec_tgt: 5, gms_active: 1, gp: 1, pts_ppr: 22.3 },
+    player: { position: "RB", fantasy_positions: ["RB"] },
+  },
+  {
+    player_id: "11000",
+    team: "GB",
+    opponent: "MIN",
+    game_id: "202600403",
+    date: "2026-10-04",
+    stats: { gms_active: 1, pos_rank_ppr: 999 },
+    player: { position: "RB", fantasy_positions: ["RB"] },
+  },
+];
+
+/** api.sleeper.com projection rows: one with a game, one without (no team, zero points). */
+export const projectionRowsWeek5: StatRow[] = [
+  { player_id: "9226", team: "ATL", opponent: "NO", stats: { pts_ppr: 19.8 }, player: { position: "RB", fantasy_positions: ["RB"] } },
+  { player_id: "11001", team: null, opponent: null, stats: { pts_ppr: 0 }, player: { position: "RB", fantasy_positions: ["RB"] } },
+];
+
+/** ESPN injuries feed: one designated player with a player link, one ACTIVE entry with no links. */
+export const espnInjuries = {
+  injuries: [
+    {
+      injuries: [
+        {
+          id: "900001",
+          status: "Questionable",
+          date: "2026-10-08T18:00Z",
+          shortComment: "Taylor (ankle) was limited at practice Wednesday.",
+          longComment: "Taylor was limited Wednesday with an ankle injury.",
+          type: { id: "1", name: "INJURY_STATUS_QUESTIONABLE", description: "questionable", abbreviation: "Q" },
+          details: { type: "Ankle" },
+          athlete: {
+            displayName: "Jonathan Taylor",
+            position: { name: "Running Back" },
+            links: [{ rel: ["playercard", "desktop", "athlete"], href: "https://www.espn.com/nfl/player/_/id/4242335/jonathan-taylor" }],
+          },
+        },
+        {
+          id: "900002",
+          status: "Active",
+          type: { id: "0", name: "INJURY_STATUS_ACTIVE", description: "active", abbreviation: "A" },
+          details: { type: "Hamstring" },
+          athlete: { displayName: "Practice Squad", position: { name: "Wide Receiver" }, links: [] },
+        },
+      ],
+    },
+  ],
+};
+
+export const espnNewsTaylor = {
+  feed: [
+    {
+      type: "Rotowire",
+      headline: "Taylor limited Wednesday",
+      description: "Jonathan Taylor was limited at practice.",
+      story: "Taylor (ankle) was limited at practice Wednesday.",
+      published: "2026-10-08T19:00:00Z",
+      playerId: 4242335,
+    },
+  ],
+};
+
+/** ESPN teams list. WSH has a numeric id to cover both id types. */
+export const espnTeams = {
+  sports: [
+    {
+      leagues: [
+        {
+          teams: [
+            { team: { id: "11", abbreviation: "IND", displayName: "Indianapolis Colts" } },
+            { team: { id: 28, abbreviation: "WSH", displayName: "Washington Commanders" } },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+export const espnRosterInd = {
+  athletes: [
+    {
+      position: "offense",
+      items: [
+        { id: "4242335", fullName: "Jonathan Taylor", position: { abbreviation: "RB" }, jersey: "28" },
+        { id: 4000001, fullName: "Test Receiver Jr.", position: { abbreviation: "WR" }, jersey: "11" },
+      ],
+    },
+    { position: "defense", items: [{ id: "4000002", fullName: "Test Linebacker", position: { abbreviation: "LB" } }] },
+  ],
+};
+
+export function statRowsUrl(week: number): string {
+  return `https://api.sleeper.com/stats/nfl/2026/${week}?season_type=regular&position[]=QB&position[]=RB&position[]=TE&position[]=WR`;
+}
+
+/** KC players for usage tests: Kelce (Out) is TE1; the others are healthy. */
+export const kcUsagePlayers: PlayerMap = {
+  "5850": { ...players["5850"]!, depth_chart_position: "TE", depth_chart_order: 1 },
+  "12001": p("12001", "Kc", "Receiver", "WR", "KC", { search_rank: 50, depth_chart_position: "LWR", depth_chart_order: 1 }),
+  "12002": p("12002", "Kc", "Backup", "TE", "KC", { search_rank: 400, depth_chart_position: "TE", depth_chart_order: 2 }),
+  "12003": p("12003", "Kc", "Runner", "RB", "KC", { search_rank: 60, depth_chart_position: "RB", depth_chart_order: 1 }),
+};
+
+function kcRow(id: string, pos: string, stats: StatRow["stats"]): StatRow {
+  return { player_id: id, team: "KC", opponent: "DEN", stats, player: { position: pos, fantasy_positions: [pos] } };
+}
+
+/**
+ * KC weeks 1-4. Kelce plays weeks 1-2 (75% snaps, 25% target share), has no row in week 3 and a row
+ * with no snaps in week 4. His backup TE's target share goes from 5% to 27.5% once he is out. Every
+ * week has 40 targets, 20 carries and 8 red zone looks.
+ */
+export const kcUsageRows: Record<number, StatRow[]> = Object.fromEntries(
+  [1, 2, 3, 4].map((week) => {
+    const withKelce = week <= 2;
+    const rows: StatRow[] = [
+      kcRow("4046", "QB", { off_snp: 60, tm_off_snp: 60, rush_att: 4, gms_active: 1 }),
+      kcRow("12003", "RB", { off_snp: 42, tm_off_snp: 60, rush_att: 16, rush_rz_att: 4, rec_tgt: 8, gms_active: 1 }),
+      withKelce
+        ? kcRow("12001", "WR", { off_snp: 54, tm_off_snp: 60, rec_tgt: 20, rec_rz_tgt: 2, rec_air_yd: 200, gms_active: 1 })
+        : kcRow("12001", "WR", { off_snp: 54, tm_off_snp: 60, rec_tgt: 21, rec_rz_tgt: 2, rec_air_yd: 200, gms_active: 1 }),
+      withKelce
+        ? kcRow("12002", "TE", { off_snp: 12, tm_off_snp: 60, rec_tgt: 2, rec_air_yd: 20, gms_active: 1 })
+        : kcRow("12002", "TE", { off_snp: 48, tm_off_snp: 60, rec_tgt: 11, rec_rz_tgt: 2, rec_air_yd: 100, gms_active: 1 }),
+    ];
+    if (withKelce) rows.push(kcRow("5850", "TE", { off_snp: 45, tm_off_snp: 60, rec_tgt: 10, rec_rz_tgt: 2, rec_air_yd: 80, gms_active: 1 }));
+    if (week === 4) rows.push(kcRow("5850", "TE", {}));
+    return [week, rows];
+  }),
+);
+
+/** Route overrides for connectedClient: the KC player map additions and stat rows for weeks 1-4. */
+export function kcUsageRoutes(extraPlayers: PlayerMap = {}): Record<string, unknown> {
+  const out: Record<string, unknown> = { "/players/nfl": { ...players, ...kcUsagePlayers, ...extraPlayers } };
+  for (const [week, rows] of Object.entries(kcUsageRows)) out[statRowsUrl(Number(week))] = rows;
+  return out;
+}
+
+/**
+ * ESPN overrides that add KC to the teams list, a KC roster with Travis Kelce, and a Kelce item of the
+ * given type.name to the injury feed (alongside the default Jonathan Taylor item).
+ */
+export function espnKcRoutes(kelceType: string): Record<string, unknown> {
+  const kelce = {
+    id: "900010",
+    status: kelceType === "INJURY_STATUS_ACTIVE" ? "Active" : "Out",
+    date: "2026-10-09T12:00Z",
+    shortComment: "Kelce (knee) update.",
+    type: { name: kelceType },
+    details: { type: "Knee" },
+    athlete: {
+      displayName: "Travis Kelce",
+      position: { name: "Tight End" },
+      links: [{ href: "https://www.espn.com/nfl/player/_/id/15847/travis-kelce" }],
+    },
+  };
+  return {
+    [ESPN_TEAMS_URL]: { sports: [{ leagues: [{ teams: [...espnTeams.sports[0]!.leagues[0]!.teams, { team: { id: "12", abbreviation: "KC", displayName: "Kansas City Chiefs" } }] }] }] },
+    "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12/roster": {
+      athletes: [{ position: "offense", items: [{ id: "15847", fullName: "Travis Kelce", position: { abbreviation: "TE" } }] }],
+    },
+    [ESPN_INJURIES_URL]: { injuries: [...espnInjuries.injuries, { injuries: [kelce] }] },
+  };
+}
+
+/** The default ESPN injury feed with Jonathan Taylor's item changed to the given type.name. */
+export function espnTaylorAs(typeName: string): Record<string, unknown> {
+  const [team] = espnInjuries.injuries;
+  const [taylor, ...rest] = team!.injuries;
+  return { [ESPN_INJURIES_URL]: { injuries: [{ injuries: [{ ...taylor, type: { name: typeName } }, ...rest] }] } };
+}
+
 /** Route table: path (without base) -> body. Query strings are matched exactly where present. */
 export function routes(): Record<string, unknown> {
   return {
@@ -351,5 +551,11 @@ export function routes(): Record<string, unknown> {
     "/projections/nfl/regular/2026": projectionsWeek5,
     "/stats/nfl/regular/2026/4": statsWeek4,
     "/stats/nfl/regular/2026/5": {},
+    [STAT_ROWS_WEEK4_URL]: statRowsWeek4,
+    [PROJECTION_ROWS_WEEK5_URL]: projectionRowsWeek5,
+    [ESPN_INJURIES_URL]: espnInjuries,
+    [ESPN_TEAMS_URL]: espnTeams,
+    [ESPN_ROSTER_IND_URL]: espnRosterInd,
+    [ESPN_NEWS_TAYLOR_URL]: espnNewsTaylor,
   };
 }
