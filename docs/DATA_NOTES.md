@@ -197,3 +197,7 @@ Checked 2026-09-24 with 2 requests (the 2025 week 1 v1 projection map, fetched t
 - **Historical depth charts and `search_rank`.** They come from the current player map only.
 - **Historical trending adds.** The trending endpoint takes a lookback window ending now (not probed).
 - **The waiver pool as it stood each week.** There are no 2025 league rosters or transactions for this league.
+
+## Sleeper roster `total_moves`
+
+Checked 2026-09-24 in league `1374823072246272000` (week 3): `settings.total_moves` is 0 on all 10 rosters, while `/league/{id}/transactions/{week}` for weeks 1-3 holds 67 transactions, including failed waiver claims. `get_league_standings` counts moves from the transaction history instead and no longer reports `total_moves`.

@@ -163,6 +163,24 @@ describe("users & leagues", () => {
     expect(data).toMatchObject({ faab_budget: 100, playoff_teams: 2 });
   });
 
+  it("get_league_standings counts moves from completed transactions, once per team per transaction", async () => {
+    const { data } = await c.call("get_league_standings", { league_id: LEAGUE_ID });
+    const rows = data!.standings as Record<string, unknown>[];
+    // Week 5 holds a trade between rosters 1 and 2, a completed claim for 3 and a failed claim for 4.
+    expect(Object.fromEntries(rows.map((r) => [r.roster_id, r.moves_from_transactions]))).toEqual({ 1: 1, 2: 1, 3: 1, 4: 0 });
+    expect(rows.some((r) => "total_moves" in r)).toBe(false);
+    expect(data!.moves_basis).toContain("weeks 1-5");
+  });
+
+  it("get_league_standings counts a move without roster_ids from its adds and drops", async () => {
+    c.ff.set(`/league/${LEAGUE_ID}/transactions/2`, [
+      { transaction_id: "t4", type: "free_agent", status: "complete", status_updated: 1, created: 1, creator: "444", leg: 2, roster_ids: null, consenter_ids: null, adds: { "11000": 4 }, drops: { "11004": 4 }, draft_picks: [], waiver_budget: [], settings: null, metadata: null },
+    ]);
+    const { data } = await c.call("get_league_standings", { league_id: LEAGUE_ID });
+    const rows = data!.standings as Record<string, unknown>[];
+    expect(Object.fromEntries(rows.map((r) => [r.roster_id, r.moves_from_transactions]))).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1 });
+  });
+
   it("get_league_history walks previous seasons and finds champions", async () => {
     const { data } = await c.call("get_league_history", { league_id: LEAGUE_ID, max_seasons: 5 });
     expect(data!.seasons_found).toBe(2);

@@ -123,7 +123,7 @@ Every tool that takes a team accepts any of `username` (or display name), `user_
 | `get_user` | Username ↔ `user_id`, display name, avatar. |
 | `get_user_leagues` | A user's leagues for a season with league_id, scoring format, roster shape, status. |
 | `get_league` | Summarized settings: scoring (PPR/half/std, TE premium, pass TD, bonuses), roster slots, redraft/keeper/dynasty, waivers/FAAB, playoffs, trade deadline, divisions, commissioners. `include_raw` for the full objects. |
-| `get_league_standings` | Ranked standings with record, PF/PA, streak, waiver position, FAAB remaining, division. Doubles as the roster_id → manager map. |
+| `get_league_standings` | Ranked standings with record, PF/PA, streak, waiver position, FAAB remaining, division, and moves counted from the league's transaction history. Doubles as the roster_id → manager map. |
 | `get_league_history` | Walks `previous_league_id` back through seasons: champion, runner-up, regular-season leader, points leader. |
 
 ### Rosters & matchups

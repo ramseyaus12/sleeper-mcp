@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadLeague, NO_USER_HINT, resolveSeason, resolveUserId, ToolError, type ServerContext } from "../context.js";
 import { avatarUrl } from "../sleeper/client.js";
-import type { League, LeagueUser, Roster } from "../sleeper/types.js";
+import type { League, LeagueUser, Roster, Transaction } from "../sleeper/types.js";
 import {
   isoDate,
   leagueCard,
@@ -108,14 +108,16 @@ export function registerLeagueTools(server: McpServer, ctx: ServerContext): void
     {
       title: "League standings",
       description:
-        "Standings for a league, sorted by wins then points for: rank, team name, manager, record, points for/against, streak, waiver position, FAAB remaining, division. Also serves as the roster_id ↔ manager mapping for the league.",
+        "Standings for a league, sorted by wins then points for: rank, team name, manager, record, points for/against, streak, waiver position, FAAB remaining, division, and moves (completed transactions per team, counted from the league's transaction history). Also serves as the roster_id ↔ manager mapping for the league.",
       inputSchema: { league_id: leagueIdSchema },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ league_id }) =>
       guard(async () => {
         const bundle = await loadLeague(ctx, league_id);
-        return standings(bundle.league, bundle.rosters, bundle.teams);
+        const lastWeek = Math.min(Math.max(num(bundle.league.settings?.leg), 1), 18);
+        const lists = await Promise.all(Array.from({ length: lastWeek }, (_, i) => ctx.client.getTransactions(bundle.league.league_id, i + 1)));
+        return standings(bundle.league, bundle.rosters, bundle.teams, { counts: countMoves(lists.flat()), weeks: lastWeek });
       }),
   );
 
@@ -216,7 +218,7 @@ export function leagueDetails(league: League, users: LeagueUser[], includeRaw: b
   return details;
 }
 
-export function standings(league: League, rosters: Roster[], teams: Map<number, TeamRef>) {
+export function standings(league: League, rosters: Roster[], teams: Map<number, TeamRef>, moves?: { counts: Map<number, number>; weeks: number }) {
   const s = league.settings ?? {};
   const faabBudget = s.waiver_type === 2 ? num(s.waiver_budget) : null;
   const meta = (league.metadata ?? {}) as Record<string, unknown>;
@@ -241,7 +243,7 @@ export function standings(league: League, rosters: Roster[], teams: Map<number, 
       streak: typeof streak === "string" ? streak : undefined,
       waiver_position: rs.waiver_position ?? null,
       faab_remaining: faabBudget === null ? undefined : faabBudget - num(rs.waiver_budget_used),
-      total_moves: num(rs.total_moves),
+      moves_from_transactions: moves ? (moves.counts.get(r.roster_id) ?? 0) : undefined,
       division: divisionName ?? (rs.division ? String(rs.division) : undefined),
     };
   });
@@ -256,8 +258,22 @@ export function standings(league: League, rosters: Roster[], teams: Map<number, 
     playoff_teams: num(s.playoff_teams) || null,
     playoff_week_start: s.playoff_week_start ?? null,
     faab_budget: faabBudget,
+    moves_basis: moves
+      ? `moves_from_transactions counts completed transactions in weeks 1-${moves.weeks} (waiver claims, free-agent moves, trades, commissioner moves), once per team per transaction; failed claims are not counted.`
+      : undefined,
     standings: rows,
   };
+}
+
+/** Completed transactions per roster, each counted once for every team it involves. */
+export function countMoves(transactions: Transaction[]): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const t of transactions) {
+    if (t.status !== "complete") continue;
+    const involved = new Set<number>([...(t.roster_ids ?? []), ...Object.values(t.adds ?? {}), ...Object.values(t.drops ?? {})]);
+    for (const id of involved) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export { isoDate };
